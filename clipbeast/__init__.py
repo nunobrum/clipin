@@ -64,6 +64,8 @@ class ClipBeast:
             handle = user32.GetClipboardData(fmt)
             if handle:
                 ptr = kernel32.GlobalLock(handle)
+                if not ptr:
+                    continue
                 size = kernel32.GlobalSize(handle)
                 buffer = ctypes.create_string_buffer(size)
                 ctypes.memmove(buffer, ptr, size)
@@ -101,10 +103,16 @@ class ClipBeast:
             raise ClipboardError("Failed to allocate global memory")
 
         locked_mem = kernel32.GlobalLock(h_global)
+        if not locked_mem:
+            kernel32.GlobalFree(h_global)
+            user32.CloseClipboard()
+            raise ClipboardError("Failed to lock global memory")
+
         ctypes.memmove(locked_mem, data, len(data))
         kernel32.GlobalUnlock(h_global)
 
         if not user32.SetClipboardData(fmt, h_global):
+            kernel32.GlobalFree(h_global)
             user32.CloseClipboard()
             raise ClipboardError("Failed to set clipboard data")
 
