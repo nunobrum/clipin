@@ -1,6 +1,7 @@
-# 🧠 ClipBeast
+# 🧠 clipin
 
-**ClipBeast** is a pure-Python, cross-platform clipboard utility that supports multiple clipboard formats—text, HTML, and images (where supported)—without third-party dependencies.
+**clipin** is a pure-Python, cross-platform clipboard utility that supports multiple clipboard formats—text, HTML, 
+and images (where supported)—without third-party dependencies.
 
 ## ✅ Features
 
@@ -13,7 +14,14 @@
 
 ## 🚀 Installation
 
-Just clone and use:
 ```bash
-git clone https://github.com/yourname/clipbeast.git
-cd clipbeast
+pip install clipin
+```
+## 📦 Usage
+
+```python
+from clipin import Clipboard
+cb = Clipboard()
+cb.copy("Hello, World!")
+print(cb.paste())  # Outputs: Hello, World!
+
