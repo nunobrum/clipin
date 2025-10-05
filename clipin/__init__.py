@@ -153,49 +153,64 @@ if sys.platform.startswith("win"):
     }
     TEXT_FORMATS_NEEDING_ENCONDING = (CF_TEXT, CF_DSPTEXT)
 
-    MIME_TO_CF = {
-        # --- Text formats ---
-        "text/plain": CF_TEXT,  # ANSI text
-        "text/plain;charset=unicode": CF_UNICODETEXT,  # UTF-16 (Windows native)
-        "text/plain;charset=oem": CF_OEMTEXT,  # OEM character set text
-        "text/locale": CF_LOCALE,  # Locale information (metadata)
+    # --- Base Mappings ---
+    MIME_CF_MAPPINGS = (
+        # Text formats
+        ("text/plain", CF_TEXT),
+        ("text/html", CF_UNICODETEXT),  # Using CF_UNICODETEXT for html encodings. This needs to come first for the mapping to work
+        ("text/plain;charset=utf-16", CF_UNICODETEXT),
+        ("text/plain;charset=oem", CF_OEMTEXT),
+        ("text/locale", CF_LOCALE),
 
-        # --- Image / bitmap formats ---
-        "image/bmp": CF_BITMAP,  # Native HBITMAP handle
-        "image/x-dib": CF_DIB,  # Device Independent Bitmap
-        "image/vnd.ms-photo": CF_DIBV5,  # BITMAPV5HEADER (high color depth)
-        "image/tiff": CF_TIFF,  # Tagged Image File Format
-        "image/x-wmf": CF_METAFILEPICT,  # Windows Metafile
-        "image/x-emf": CF_ENHMETAFILE,  # Enhanced Metafile
+        # Image formats
+        ("image/bmp", CF_BITMAP),
+        ("image/x-dib", CF_DIB),
+        ("image/vnd.ms-photo", CF_DIBV5),
+        ("image/tiff", CF_TIFF),
+        ("image/x-wmf", CF_METAFILEPICT),
+        ("image/x-emf", CF_ENHMETAFILE),
 
-        # --- Audio / multimedia ---
-        "audio/vnd.wave": CF_WAVE,  # Standard WAV audio
-        "audio/x-wav": CF_WAVE,  # Alias for wave audio
-        "audio/x-riff": CF_RIFF,  # RIFF audio container
+        # Audio formats
+        ("audio/x-wav", CF_WAVE),
+        ("audio/x-riff", CF_RIFF),
 
-        # --- Spreadsheet / data formats ---
-        "application/vnd.ms-sylk": CF_SYLK,  # Microsoft Symbolic Link
-        "application/x-dif": CF_DIF,  # Data Interchange Format
-        "application/x-ms-pen": CF_PENDATA,  # Pen computing data
+        # Data / spreadsheet formats
+        ("application/vnd.ms-sylk", CF_SYLK),
+        ("application/x-dif", CF_DIF),
+        ("application/x-ms-pen", CF_PENDATA),
 
-        # --- File drops (drag & drop) ---
-        "application/x-msdownload": CF_HDROP,  # File drop list
-        "application/x-file-list": CF_HDROP,  # Common alias
+        # File / drag-and-drop
+        ("application/x-file-list", CF_HDROP),
 
-        # --- Palette / graphics ---
-        "application/x-color-palette": CF_PALETTE,  # Logical color palette
+        # Palette / graphics
+        ("application/x-color-palette", CF_PALETTE),
 
-        # --- Owner / display / private formats ---
-        "application/x-owner-display": CF_OWNERDISPLAY,
-        "application/x-display-text": CF_DSPTEXT,
-        "application/x-display-bitmap": CF_DSPBITMAP,
-        "application/x-display-metafile": CF_DSPMETAFILEPICT,
-        "application/x-display-enhmetafile": CF_DSPENHMETAFILE,
+        # Display / owner / private
+        ("application/x-owner-display", CF_OWNERDISPLAY),
+        ("application/x-display-text", CF_DSPTEXT),
+        ("application/x-display-bitmap", CF_DSPBITMAP),
+        ("application/x-display-metafile", CF_DSPMETAFILEPICT),
+        ("application/x-display-enhmetafile", CF_DSPENHMETAFILE),
 
-        # --- Private / GDI / system-defined ---
-        # "application/x-private-format": CF_PRIVATEFIRST–CF_PRIVATELAST,
-        # "application/x-gdi-object": CF_GDIOBJFIRST–CF_GDIOBJLAST,
-    }
+        # Private / GDI ranges
+        # ("application/x-private-format", CF_PRIVATEFIRST, CF_PRIVATELAST),
+        # ("application/x-gdi-object", CF_GDIOBJFIRST, CF_GDIOBJLAST),
+    )
+
+    # --- Derived Dictionaries ---
+    def mime_to_cf(mimep) -> int:
+        for mime, cf in MIME_CF_MAPPINGS:
+            if mime == mimep:
+                return cf
+        raise IndexError(f"MIME {mimep} has no corresponding CF Format")
+
+    def cf_to_mime(cfp):
+        if cfp not in STANDARD_FORMAT_DESCRIPTION:
+            raise IndexError(f"CF Code {cfp} not supported")
+        for mime, cf in MIME_CF_MAPPINGS:
+            if cf == cfp:
+                return mime
+        return STANDARD_FORMAT_DESCRIPTION[cfp]
 
     safeCreateWindowExA = CheckedCall(windll.user32.CreateWindowExA)
     safeCreateWindowExA.argtypes = [DWORD, LPCSTR, LPCSTR, DWORD, INT, INT,
@@ -294,14 +309,44 @@ if sys.platform.startswith("win"):
             safeCloseClipboard()
 
 
-    def copy(text_or_dict, clip_format=CF_UNICODETEXT):
+    def copy(data, clip_format=CF_UNICODETEXT):
+        """
+        Copies the provided data to the Windows clipboard in the specified clipboard format.
+        It makes use of Windows API functions to manage the clipboard.
+        The data parameter can also be a dictionary is provided, it can copy multiple formats in one
+        operation.  The function ensures to acquire a valid window handle and clipboard
+        ownership before performing the operation.
+
+        For multiplatform compatibility, this function is made to accept the POSIX MIME types.
+        The mapping between the MIME Types and CF Formats is the given in the CF_MIME_MAPPINGS tuple list.
+
+        :param data: The text or dictionary to be copied to the clipboard. If a
+            dictionary is provided, each key-value pair represents a clipboard format
+            and its corresponding text content.
+        :type data: str | dict
+        :param clip_format: The clipboard format for the provided text. It defaults to
+            CF_UNICODETEXT. If a string is provided, it will be converted to the
+            appropriate clipboard format using a predefined mapping.
+        :type clip_format: int | str
+        :return: None
+        :rtype: None
+        :raises ValueError: If invalid data or format is provided or an error occurs
+            during the clipboard operation.
+        """
         # This function is heavily based on
         # http://msdn.com/ms649016#_win32_Copying_Information_to_the_Clipboard
 
-        if isinstance(text_or_dict, dict):
-            text_dict = text_or_dict
+        def _to_cf(cf_or_mime):
+            if isinstance(cf_or_mime, str):
+                return mime_to_cf(cf_or_mime)
+            else:
+                return cf_or_mime
+
+        if isinstance(data, dict):
+            # Transform all MIME types to CF codes
+            text_dict = {_to_cf(cf): text for cf, text in data.items()}
         else:
-            text_dict = {clip_format: text_or_dict}
+            text_dict = {_to_cf(clip_format): data}
 
         with window() as hwnd:
             # http://msdn.com/ms649048
@@ -343,7 +388,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format=CF_UNICODETEXT) -> str | dict[str, str|bytes]:
+    def paste(clip_format=CF_UNICODETEXT, use_mime=False) -> str | dict[str, str|bytes]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -356,6 +401,7 @@ if sys.platform.startswith("win"):
         :param clip_format: The clipboard format to retrieve. This can be one of the
             predefined clipboard formats like CF_UNICODETEXT, or a list/tuple of
             formats for multi-format retrieval. Defaults to CF_UNICODETEXT.
+            For compatibility, if a MIME Type is passed, an equivalent MIME Type will be used.
 
         :return: If a single format is provided, returns the data for that format,
             decoded accordingly based on the format type. If multiple formats are
@@ -394,11 +440,18 @@ if sys.platform.startswith("win"):
                             text.decode(ENCODING)
                     answer[clip_format] = text
 
-            # now will see if only one is returned or the complete list
-        return answer[clip_format] if single_output else answer
+        # now will see if only one is returned or the complete list
+        if single_output:
+            return answer[clip_format]
+        else:
+            # if it is a list, check whether to use MIME types
+            if use_mime:
+                return {cf_to_mime(cfp): data for cfp, data in answer.items()}
+            else:
+                return answer
 
 
-    def available_formats():
+    def available_formats() -> list[str]:
         formats = []
         with clipboard(None):
             fmt = 0
