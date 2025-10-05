@@ -1,0 +1,1 @@
+"""Tests for clipin package"""
