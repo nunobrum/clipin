@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "clipin"
-version = "1.0.0"
+version = "0.3.0"
 description = "A zero-dependency cross-platform clipboard utility for Python."
 authors = ["Nuno Brum <author@example.com>"]
 license = "MIT"
