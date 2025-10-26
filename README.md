@@ -1,6 +1,6 @@
 # 🧠 clipin
 
-**clipin** is a pure-Python, cross-platform clipboard utility that supports multiple clipboard formats—text, HTML, 
+**clipin** is a pure-Python, <s>cross-platform</s> windows (for the time being) clipboard utility that supports multiple clipboard formats—text, HTML, 
 and images (where supported)—without third-party dependencies.
 
 ## ✅ Features
