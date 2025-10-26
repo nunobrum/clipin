@@ -3,194 +3,645 @@ Cross-platform clipboard manager without external dependencies
 """
 
 import platform
-import subprocess
-import sys
 
 
-class Clipboard:
-    """A simple clipboard manager that works across different platforms"""
-    
-    def __init__(self):
-        self.system = platform.system()
-        
-    def copy(self, text):
-        """Copy text to clipboard
-        
-        Args:
-            text: String to copy to clipboard
-            
-        Returns:
-            bool: True if successful, False otherwise
+_system = platform.system()
+
+class ClipboardError(Exception):
+    pass
+
+
+DEFAULT_MIME = 'text/html'
+
+
+if _system == "Windows":
+    import time
+    import ctypes
+    from ctypes import c_size_t, sizeof, c_wchar_p, get_errno, c_wchar, windll, string_at
+    from ctypes.wintypes import (HGLOBAL, LPVOID, DWORD, LPCSTR, INT, HWND,
+                                 HINSTANCE, HMENU, BOOL, UINT, HANDLE, CHAR)
+
+    msvcrt = ctypes.CDLL('msvcrt')
+
+    import contextlib
+
+    GMEM_MOVEABLE = 0x0002
+
+    ENCODING = 'utf-8'
+
+
+    def _stringify_text(text):
+        accepted_types = (str, int, float, bool)
+        if not isinstance(text, accepted_types):
+            raise ClipboardError(
+                'only str, int, float, and bool values can be copied to the clipboard, not %s' % text.__class__.__name__)
+        return str(text)
+
+
+    # Windows-related clipboard functions:
+    class CheckedCall(object):
+        def __init__(self, f):
+            super(CheckedCall, self).__setattr__("f", f)
+
+        def __call__(self, *args):
+            ret = self.f(*args)
+            if not ret and get_errno():
+                raise ClipboardError("Error calling " + self.f.__name__)
+            return ret
+
+        def __setattr__(self, key, value):
+            setattr(self.f, key, value)
+
+    # Standard Clipboard Formats in Windows
+    # Constant = value          # Description
+    CF_BITMAP = 2  # A handle to a bitmap (HBITMAP).
+    CF_DIB = 8  # A memory object containing a BITMAPINFO structure followed by the bitmap bits.
+    CF_DIBV5 = 17  # A memory object containing a BITMAPV5HEADER structure followed by the bitmap color
+    # space information and the bitmap bits.
+    CF_DIF = 5  # Software Arts' Data Interchange Format.
+    CF_DSPBITMAP = 0x0082  # Bitmap display format associated with a private format. The hMem parameter must be a
+    # handle to data that can be displayed in bitmap format in lieu of the privately
+    # formatted data.
+    CF_DSPENHMETAFILE = 0x008E  # Enhanced metafile display format associated with a private format.
+    # The hMem parameter must be a handle to data that can be displayed in enhanced metafile
+    # format in lieu of the privately formatted data.
+    CF_DSPMETAFILEPICT = 0x0083  # Metafile-picture display format associated with a private format. The hMem parameter
+    # must be a handle to data that can be displayed in metafile-picture format in lieu of
+    # the privately formatted data.
+    CF_DSPTEXT = 0x0081  # Text display format associated with a private format. The hMem parameter must be a
+    # handle to data that can be displayed in text format in lieu of the privately formatted
+    # data.
+    CF_ENHMETAFILE = 14  # A handle to an enhanced metafile (HENHMETAFILE).
+    CF_GDIOBJFIRST = 0x0300  # Start of a range of integer values for application-defined GDI object clipboard
+    # formats. The end of the range is CF_GDIOBJLAST.
+    # Handles associated with clipboard formats in this range are not automatically deleted
+    # using the GlobalFree function when the clipboard is emptied. Also, when using values
+    # in this range, the hMem parameter is not a handle to a GDI object, but is a handle
+    # allocated by the GlobalAlloc function with the GMEM_MOVEABLE flag.
+    CF_GDIOBJLAST = 0x03FF  # See CF_GDIOBJFIRST.
+    CF_HDROP = 15  # A handle to type HDROP that identifies a list of files. An application can retrieve
+    # information about the files by passing the handle to the DragQueryFile function.
+    CF_LOCALE = 16  # The data is a handle to the locale identifier associated with text in the clipboard.
+    # When you close the clipboard, if it contains CF_TEXT data but no CF_LOCALE data, the
+    # system automatically sets the CF_LOCALE format to the current input language. You can
+    # use the CF_LOCALE format to associate a different locale with the clipboard text.
+    # An application that pastes text from the clipboard can retrieve this format to
+    # determine which character set was used to generate the text.
+    # Note that the clipboard does not support plain text in multiple character sets.
+    # To achieve this, use a formatted text data type such as RTF instead.
+    # The system uses the code page associated with CF_LOCALE to implicitly convert from
+    # CF_TEXT to CF_UNICODETEXT. Therefore, the correct code page table is used for the
+    # conversion.
+    CF_METAFILEPICT = 3  # Handle to a metafile picture format as defined by the METAFILEPICT structure. When
+    # passing a CF_METAFILEPICT handle by means of DDE, the application responsible for
+    # deleting hMem should also free the metafile referred to by the CF_METAFILEPICT handle.
+    CF_OEMTEXT = 7  # Text format containing characters in the OEM character set. Each line ends with a
+    # carriage return/linefeed (CR-LF) combination. A null character signals the end of the
+    # data.
+    CF_OWNERDISPLAY = 0x0080  # Owner-display format. The clipboard owner must display and update the clipboard viewer
+    # window, and receive the WM_ASKCBFORMATNAME, WM_HSCROLLCLIPBOARD, WM_PAINTCLIPBOARD,
+    # WM_SIZECLIPBOARD, and WM_VSCROLLCLIPBOARD messages. The hMem parameter must be NULL.
+    CF_PALETTE = 9  # Handle to a color palette. Whenever an application places data in the clipboard that
+    # depends on or assumes a color palette, it should place the palette on the clipboard as
+    # well.
+    # If the clipboard contains data in the CF_PALETTE (logical color palette) format, the
+    # application should use the SelectPalette and RealizePalette functions to realize
+    # (compare) any other data in the clipboard against that logical palette.
+    # When displaying clipboard data, the clipboard always uses as its current palette any
+    # object on the clipboard that is in the CF_PALETTE format.
+    CF_PENDATA = 10  # Data for the pen extensions to the Microsoft Windows for Pen Computing.
+    CF_PRIVATEFIRST = 0x0200  # Start of a range of integer values for private clipboard formats. The range ends with
+    # CF_PRIVATELAST. Handles associated with private clipboard formats are not freed
+    # automatically; the clipboard owner must free such handles, typically in response to
+    # the WM_DESTROYCLIPBOARD message.
+    CF_PRIVATELAST = 0x02FF  # See CF_PRIVATEFIRST.
+    CF_RIFF = 11  # Represents audio data more complex than can be represented in a CF_WAVE standard wave
+    # format.
+    CF_SYLK = 4  # Microsoft Symbolic Link (SYLK) format.
+    CF_TEXT = 1  # Text format. Each line ends with a carriage return/linefeed (CR-LF) combination.
+    # A null character signals the end of the data. Use this format for ANSI text.
+    CF_TIFF = 6  # Tagged-image file format.
+    CF_UNICODETEXT = 13  # Unicode text format. Each line ends with a carriage return/linefeed (CR-LF)
+    # combination. A null character signals the end of the data.
+    CF_WAVE = 12  # Represents audio data in one of the standard wave formats, such as 11 kHz or
+    # 22 kHz PCM.
+
+    STANDARD_FORMAT_DESCRIPTION = {
+        # Identifier: "Descriptor",
+        CF_BITMAP: "BITMAP",
+        CF_DIB: "DIB",
+        CF_DIBV5: "DIBV5",
+        CF_DIF: "DIF",
+        CF_DSPBITMAP: "DSP BITMAP",
+        CF_DSPENHMETAFILE: "DSP ENHMETAFILE",
+        CF_DSPMETAFILEPICT: "DSP METAFILEPICT",
+        CF_DSPTEXT: "DSP TEXT",
+        CF_ENHMETAFILE: "ENHMETAFILE",
+        CF_GDIOBJFIRST: "GDIOBJ FIRST",
+        CF_GDIOBJLAST: "GDIOBJ LAST",
+        CF_HDROP: "Handle Drag and DROP",
+        CF_LOCALE: "LOCALE",
+        CF_METAFILEPICT: "METAFILE PICT",
+        CF_OEMTEXT: "OEM TEXT",
+        CF_OWNERDISPLAY: "OWNER DISPLAY",
+        CF_PALETTE: "PALETTE",
+        CF_PENDATA: "Microsoft PEN DATA",
+        CF_PRIVATEFIRST: "PRIVATE FIRST",
+        CF_PRIVATELAST: "PRIVATE LAST",
+        CF_RIFF: "RIFF",
+        CF_SYLK: "SYLK",
+        CF_TEXT: "TEXT",
+        CF_TIFF: "TIFF",
+        CF_UNICODETEXT: "UNICODE TEXT",
+        CF_WAVE: "WAVE",
+    }
+    TEXT_FORMATS_NEEDING_ENCODING = (CF_TEXT, CF_DSPTEXT)
+
+    # --- Base Mappings ---
+    MIME_CF_MAPPINGS = (
+        # Text formats
+        ("text/plain", CF_TEXT),
+        ("text/html", CF_UNICODETEXT),  # Using CF_UNICODETEXT for html encodings. This needs to come first for the mapping to work
+        ("text/plain;charset=utf-16", CF_UNICODETEXT),
+        ("text/plain;charset=oem", CF_OEMTEXT),
+        ("text/locale", CF_LOCALE),
+
+        # Image formats
+        ("image/bmp", CF_BITMAP),
+        ("image/x-dib", CF_DIB),
+        ("image/vnd.ms-photo", CF_DIBV5),
+        ("image/tiff", CF_TIFF),
+        ("image/x-wmf", CF_METAFILEPICT),
+        ("image/x-emf", CF_ENHMETAFILE),
+
+        # Audio formats
+        ("audio/x-wav", CF_WAVE),
+        ("audio/x-riff", CF_RIFF),
+
+        # Data / spreadsheet formats
+        ("application/vnd.ms-sylk", CF_SYLK),
+        ("application/x-dif", CF_DIF),
+        ("application/x-ms-pen", CF_PENDATA),
+
+        # File / drag-and-drop
+        ("application/x-file-list", CF_HDROP),
+
+        # Palette / graphics
+        ("application/x-color-palette", CF_PALETTE),
+
+        # Display / owner / private
+        ("application/x-owner-display", CF_OWNERDISPLAY),
+        ("application/x-display-text", CF_DSPTEXT),
+        ("application/x-display-bitmap", CF_DSPBITMAP),
+        ("application/x-display-metafile", CF_DSPMETAFILEPICT),
+        ("application/x-display-enhmetafile", CF_DSPENHMETAFILE),
+
+        # Private / GDI ranges
+        # ("application/x-private-format", CF_PRIVATEFIRST, CF_PRIVATELAST),
+        # ("application/x-gdi-object", CF_GDIOBJFIRST, CF_GDIOBJLAST),
+    )
+
+    # --- Derived Dictionaries ---
+    def mime_to_cf(mimep) -> int:
+        for mime, cf in MIME_CF_MAPPINGS:
+            if mime == mimep:
+                return cf
+        raise ClipboardError(f"MIME {mimep} has no corresponding CF Format")
+
+    def cf_to_mime(cfp):
+        if cfp not in STANDARD_FORMAT_DESCRIPTION:
+            raise ClipboardError(f"CF Code {cfp} not supported")
+        for mime, cf in MIME_CF_MAPPINGS:
+            if cf == cfp:
+                return mime
+        return STANDARD_FORMAT_DESCRIPTION[cfp]
+
+    safeCreateWindowExA = CheckedCall(windll.user32.CreateWindowExA)
+    safeCreateWindowExA.argtypes = [DWORD, LPCSTR, LPCSTR, DWORD, INT, INT,
+                                    INT, INT, HWND, HMENU, HINSTANCE, LPVOID]
+    safeCreateWindowExA.restype = HWND
+
+    safeDestroyWindow = CheckedCall(windll.user32.DestroyWindow)
+    safeDestroyWindow.argtypes = [HWND]
+    safeDestroyWindow.restype = BOOL
+
+    OpenClipboard = windll.user32.OpenClipboard
+    OpenClipboard.argtypes = [HWND]
+    OpenClipboard.restype = BOOL
+
+    safeCloseClipboard = CheckedCall(windll.user32.CloseClipboard)
+    safeCloseClipboard.argtypes = []
+    safeCloseClipboard.restype = BOOL
+
+    safeEnumClipboardFormats = CheckedCall(windll.user32.EnumClipboardFormats)
+    safeEnumClipboardFormats.argtypes = [INT]
+    safeEnumClipboardFormats.restype = UINT
+
+    safeGetClipboardFormatName = CheckedCall(windll.user32.GetClipboardFormatNameW)
+    safeGetClipboardFormatName.argtypes = [INT, LPCSTR]
+    safeGetClipboardFormatName.restype = UINT
+
+    safeEmptyClipboard = CheckedCall(windll.user32.EmptyClipboard)
+    safeEmptyClipboard.argtypes = []
+    safeEmptyClipboard.restype = BOOL
+
+    safeGetClipboardData = CheckedCall(windll.user32.GetClipboardData)
+    safeGetClipboardData.argtypes = [UINT]
+    safeGetClipboardData.restype = HANDLE
+
+    safeSetClipboardData = CheckedCall(windll.user32.SetClipboardData)
+    safeSetClipboardData.argtypes = [UINT, HANDLE]
+    safeSetClipboardData.restype = HANDLE
+
+    safeGlobalAlloc = CheckedCall(windll.kernel32.GlobalAlloc)
+    safeGlobalAlloc.argtypes = [UINT, c_size_t]
+    safeGlobalAlloc.restype = HGLOBAL
+
+    safeGlobalLock = CheckedCall(windll.kernel32.GlobalLock)
+    safeGlobalLock.argtypes = [HGLOBAL]
+    safeGlobalLock.restype = LPVOID
+
+    safeGlobalUnlock = CheckedCall(windll.kernel32.GlobalUnlock)
+    safeGlobalUnlock.argtypes = [HGLOBAL]
+    safeGlobalUnlock.restype = BOOL
+
+    safeGlobalSize = CheckedCall(windll.kernel32.GlobalSize)
+    safeGlobalSize.argtypes = [HGLOBAL]
+    safeGlobalSize.restype = UINT
+
+    wcslen = CheckedCall(msvcrt.wcslen)
+    wcslen.argtypes = [c_wchar_p]
+    wcslen.restype = UINT
+
+    # Windows implementation
+    @contextlib.contextmanager
+    def window():
         """
-        if not isinstance(text, str):
-            text = str(text)
-            
+        Context that provides a valid Windows hwnd.
+        """
+        # we really just need the hwnd, so setting "STATIC"
+        # as predefined lpClass is just fine.
+        hwnd = safeCreateWindowExA(0, b"STATIC", None, 0, 0, 0, 0, 0,
+                                   None, None, None, None)
         try:
-            if self.system == "Darwin":  # macOS
-                process = subprocess.Popen(
-                    ['pbcopy'],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                process.communicate(text.encode('utf-8'))
-                return process.returncode == 0
-                
-            elif self.system == "Windows":
-                process = subprocess.Popen(
-                    ['clip'],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=True
-                )
-                process.communicate(text.encode('utf-16le'))
-                return process.returncode == 0
-                
-            elif self.system == "Linux":
-                # Try xclip first
-                try:
-                    process = subprocess.Popen(
-                        ['xclip', '-selection', 'clipboard'],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    process.communicate(text.encode('utf-8'))
-                    if process.returncode == 0:
-                        return True
-                except FileNotFoundError:
-                    pass
-                
-                # Try xsel as fallback
-                try:
-                    process = subprocess.Popen(
-                        ['xsel', '--clipboard', '--input'],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    process.communicate(text.encode('utf-8'))
-                    return process.returncode == 0
-                except FileNotFoundError:
-                    raise RuntimeError(
-                        "No clipboard utility found. Please install xclip or xsel: "
-                        "sudo apt-get install xclip"
-                    )
-            else:
-                raise RuntimeError(f"Unsupported operating system: {self.system}")
-                
-        except Exception as e:
-            print(f"Error copying to clipboard: {e}", file=sys.stderr)
-            return False
-    
-    def paste(self):
-        """Get text from clipboard
-        
-        Returns:
-            str: Text from clipboard, or empty string if unsuccessful
+            yield hwnd
+        finally:
+            safeDestroyWindow(hwnd)
+
+    @contextlib.contextmanager
+    def clipboard(hwnd):
         """
+        Context manager that opens the clipboard and prevents
+        other applications from modifying the clipboard content.
+        """
+        # We may not get the clipboard handle immediately because
+        # some other application is accessing it (?)
+        # We try for at least 500ms to get the clipboard.
+        t = time.time() + 0.5
+        success = False
+        while time.time() < t:
+            success = OpenClipboard(hwnd)
+            if success:
+                break
+            time.sleep(0.01)
+        if not success:
+            raise ClipboardError("Error calling OpenClipboard")
+
         try:
-            if self.system == "Darwin":  # macOS
-                process = subprocess.Popen(
-                    ['pbpaste'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                output, _ = process.communicate()
-                return output.decode('utf-8')
-                
-            elif self.system == "Windows":
-                process = subprocess.Popen(
-                    ['powershell', '-command', 'Get-Clipboard'],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    shell=True
-                )
-                output, _ = process.communicate()
-                return output.decode('utf-16le', errors='ignore').strip()
-                
-            elif self.system == "Linux":
-                # Try xclip first
-                try:
-                    process = subprocess.Popen(
-                        ['xclip', '-selection', 'clipboard', '-o'],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    output, _ = process.communicate()
-                    if process.returncode == 0:
-                        return output.decode('utf-8')
-                except FileNotFoundError:
-                    pass
-                
-                # Try xsel as fallback
-                try:
-                    process = subprocess.Popen(
-                        ['xsel', '--clipboard', '--output'],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    output, _ = process.communicate()
-                    return output.decode('utf-8')
-                except FileNotFoundError:
-                    raise RuntimeError(
-                        "No clipboard utility found. Please install xclip or xsel: "
-                        "sudo apt-get install xclip"
-                    )
+            yield
+        finally:
+            safeCloseClipboard()
+
+    def _to_cf(cf_or_mime):
+        if isinstance(cf_or_mime, str):
+            return mime_to_cf(cf_or_mime)
+        else:
+            return cf_or_mime
+
+
+    def _copy(contents: dict):
+        # This function is heavily based on
+        # http://msdn.com/ms649016#_win32_Copying_Information_to_the_Clipboard
+
+        # Transform all MIME types to CF codes
+        text_dict = {_to_cf(cf): text for cf, text in contents.items()}
+
+        with window() as hwnd:
+            # http://msdn.com/ms649048
+            # If an application calls OpenClipboard with hwnd set to NULL,
+            # EmptyClipboard sets the clipboard owner to NULL;
+            # this causes SetClipboardData to fail.
+            # => We need a valid hwnd to copy something.
+            with clipboard(hwnd):
+                safeEmptyClipboard()
+
+                for clip_format, text in text_dict.items():
+                    if not isinstance(text, bytes):
+                        text = _stringify_text(text)  # Converts non-str values to str.
+                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                            text = text.encode(ENCODING)
+
+                    if text:
+                        # http://msdn.com/ms649051
+                        # If the hMem parameter identifies a memory object,
+                        # the object must have been allocated using the
+                        # function with the GMEM_MOVEABLE flag.
+                        if isinstance(text, bytes):  # This passes in an 8 bit format.
+                            count = len(text) + 1
+                            handle = safeGlobalAlloc(GMEM_MOVEABLE,
+                                                     count * sizeof(CHAR))
+                            locked_handle = safeGlobalLock(handle)
+                            ctypes.memmove(LPCSTR(locked_handle), LPCSTR(text), count * sizeof(CHAR))
+
+                            safeGlobalUnlock(handle)
+                            safeSetClipboardData(clip_format, handle)
+                        else:
+                            count = wcslen(text) + 1
+                            handle = safeGlobalAlloc(GMEM_MOVEABLE,
+                                                     count * sizeof(c_wchar))
+                            locked_handle = safeGlobalLock(handle)
+                            ctypes.memmove(c_wchar_p(locked_handle), c_wchar_p(text), count * sizeof(c_wchar))
+
+                            safeGlobalUnlock(handle)
+                            safeSetClipboardData(clip_format, handle)
+
+
+    def _paste(clip_formats: list[str]) -> dict[str, str|bytes]:
+        answer = {}
+        # convert any MIME types to CF codes
+        clip_formats = [_to_cf(cf) if isinstance(cf, str) else cf for cf in clip_formats]
+
+        with clipboard(None):
+
+            for clip_format in clip_formats:
+                handle = safeGetClipboardData(clip_format)
+                if not handle:
+                    answer[clip_format] = None
+                else:
+                    if clip_format == CF_UNICODETEXT:
+                        text = c_wchar_p(handle).value
+                    else:
+                        size = safeGlobalSize(handle)
+                        text = string_at(safeGlobalLock(handle), size)
+                        safeGlobalUnlock(handle)
+                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                            text = text.decode(ENCODING)
+                    answer[clip_format] = text
+
+        return {cf_to_mime(cfp): data for cfp, data in answer.items()}
+
+
+    def available_formats() -> list[str]:
+        formats = []
+        with clipboard(None):
+            fmt = 0
+            while True:
+                fmt = safeEnumClipboardFormats(fmt)
+                if fmt == 0:
+                    break
+                formats.append(fmt)
+            return formats
+
+elif _system == "Darwin":
+    import subprocess
+
+    # macOS implementation
+    def available_formats() -> list[str]:
+        # TODO: Test this implementation
+        # Use the AppKit or NSPasteboard APIs via PyObjC for a complete implementation
+        try:
+            from AppKit import NSPasteboard
+        except ImportError:
+            print("PyObjC is required for full clipboard format support on macOS.")
+            return ['text/plain', 'text/html', 'image/png']
+        else:
+            pasteboard = NSPasteboard.generalPasteboard()
+            formats = pasteboard.types()
+            # MIME to Pasteboard type mapping can be complex; for now, return common types
+            mime_to_pasteboard = {
+                'text/plain': NSPasteboard.PasteboardTypeString,
+                'text/html': NSPasteboard.PasteboardTypeHTML,
+                'image/png': NSPasteboard.PasteboardTypePNG
+            }
+            return [mime_to_pasteboard.get(fmt, fmt) for fmt in formats]
+
+    def _paste(clip_formats: list[str]) -> dict[str, str|bytes]:
+        answer = {}
+        error_occurred = False
+        if 'text/plain' in clip_formats:
+            try:
+                data = subprocess.check_output(['pbpaste'], text=True)
+            except Exception:
+                error_occurred = True
+            answer['text/plain'] = data
+        if 'text/html' in clip_formats:
+            try:
+                html = subprocess.check_output([
+                    'osascript', '-e', 'the clipboard as "HTML"'
+                ], stderr=subprocess.DEVNULL)
+            except Exception:
+                error_occurred = True
             else:
-                raise RuntimeError(f"Unsupported operating system: {self.system}")
-                
-        except Exception as e:
-            print(f"Error pasting from clipboard: {e}", file=sys.stderr)
-            return ""
-    
-    def clear(self):
-        """Clear the clipboard
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        return self.copy("")
+                answer['text/html'] = html.decode(errors='ignore')
+        if 'image/png' in clip_formats:
+            try:
+                png_data = subprocess.check_output(['osascript', '-e', 'get the clipboard as "PNGf"'],
+                                                   stderr=subprocess.DEVNULL)
+            except Exception:
+                error_occurred = True
+            else:
+                answer['image/png'] = png_data
+
+        if error_occurred and not answer:
+            raise ClipboardError(f"Failed to get clipboard data for requested formats")
+        return answer
 
 
-# Convenience module-level functions
-_default_clipboard = None
+    def _copy(contents: dict):
+        for clip_format, data in contents.items():
+            try:
+                if clip_format == 'text/plain':
+                    p = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+                    p.communicate(input=data)
+                elif clip_format == 'text/html':
+                    p = subprocess.Popen(
+                        ['osascript', '-e', f'set the clipboard to {{{data.decode("utf-8")} as «class HTML»}}'],
+                        stdin=subprocess.PIPE)
+                    p.communicate()
+                elif clip_format == 'image/png':
+                    raise ClipboardError(
+                        "Image clipboard support on macOS requires additional tools or custom scripting.")
+                else:
+                    raise ClipboardError("Unsupported format for macOS")
+            except Exception as e:
+                raise ClipboardError(f"Failed to set clipboard data: {e}")
+            break  # Only one format can be set at a time on macOS
 
 
-def _get_clipboard():
-    """Get or create the default clipboard instance"""
-    global _default_clipboard
-    if _default_clipboard is None:
-        _default_clipboard = Clipboard()
-    return _default_clipboard
+elif _system == "Linux":
+    # Linux implementation
+
+    def available_formats() -> list[str]:
+        try:
+            from gi.repository import Gtk
+        except ImportError:
+            print("PyGObject is required for full clipboard format support on Linux.")
+            return ['text/plain', 'text/html', 'image/png']
+        else:
+            # TODO: Test this implementation
+            clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+            targets = clipboard.wait_for_targets()[1]
+            formats = []
+            for target in targets:
+                formats.append(target.get_name())
+            return formats
 
 
-def copy(text):
-    """Copy text to clipboard
-    
-    Args:
-        text: String to copy to clipboard
-        
-    Returns:
-        bool: True if successful, False otherwise
+    def _paste(clip_formats: list[str]) -> dict[str, str|bytes]:
+        answer = {}
+
+        error_occurred = False
+        if 'text/plain' in clip_formats:
+            try:
+                data = subprocess.check_output(['xclip', '-selection', 'clipboard', '-out'], text=True)
+            except FileNotFoundError:
+                error_occurred = True
+            else:
+                answer['text/plain'] = data
+
+        if 'text/html' in clip_formats:
+            try:
+                 data = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'text/html', '-out'], text=True)
+            except FileNotFoundError:
+                error_occurred = True
+            else:
+                answer['text/html'] = data
+        if 'image/png' in clip_formats:
+            try:
+                png = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-out'])
+            except:
+                error_occurred = True
+            else:
+                answer['image/png'] = png
+        if error_occurred and not answer:
+            raise ClipboardError("xclip not found. Please install xclip: "
+                                 "sudo apt-get install xclip")
+        return answer
+
+
+    def _copy(contents: dict):
+        for clip_format, data in contents.items():
+            try:
+                if clip_format == 'text/plain':
+                    p = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
+                elif clip_format == 'text/html':
+                    p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'text/html'], stdin=subprocess.PIPE)
+                elif clip_format == 'image/png':
+                    p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
+                else:
+                    raise ClipboardError("Unsupported format for Linux")
+                p.communicate(input=data)
+            except FileNotFoundError:
+                raise ClipboardError("xclip not found. Please install xclip to use advanced clipboard features.")
+            except Exception as e:
+                raise ClipboardError(f"Failed to set clipboard data: {e}")
+
+            break  # Only one format can be set at a time on Linux
+
+
+else:
+    raise RuntimeError(f"Unsupported operating system: {_system}")
+
+
+# Compatibility with class approach
+class Clipboard(object):
+
+    @staticmethod
+    def copy(data, clip_format=DEFAULT_MIME):
+        return copy(data, clip_format)
+
+    @staticmethod
+    def paste(clip_format=DEFAULT_MIME):
+        return paste(clip_format)
+
+    @staticmethod
+    def clear():
+        return copy("")
+
+    @staticmethod
+    def available_formats() -> list[str]:
+        return available_formats()
+
+def paste(clip_format: str|tuple|list = DEFAULT_MIME) -> str | dict[str, str|bytes]:
     """
-    return _get_clipboard().copy(text)
+    Retrieve data from the clipboard for a specific format or multiple formats.
+
+    If multiple formats are provided, the function aggregates data from all specified formats into a
+    dictionary where keys are format identifiers and values are the corresponding
+    data retrieved.
 
 
-def paste():
-    """Get text from clipboard
-    
-    Returns:
-        str: Text from clipboard, or empty string if unsuccessful
+    :param clip_format: The clipboard format to retrieve. This can be one of the
+        predefined clipboard formats like CF_UNICODETEXT, or a list/tuple of
+        formats for multi-format retrieval. Defaults to CF_UNICODETEXT.
+        For compatibility, if a MIME Type is passed, an equivalent MIME Type will be used.
+
+    :type clip_format: str | list[int | str] | tuple[int | str]
+
+    :return: If a single format is provided, returns the data for that format,
+        decoded accordingly based on the format type. If multiple formats are
+        provided, returns a dictionary where the keys are format types and the
+        values are the respective data retrieved. In case of failure or empty
+        clipboard data for any specific format, the value will be None.
+    :rtype: Union[str, dict[str, Union[str, bytes]]]
     """
-    return _get_clipboard().paste()
+    if clip_format is None or (
+            isinstance(clip_format, (list, tuple)) and len(clip_format) == 0):
+        # Will retrieve the list of available formats
+        clip_formats = available_formats()
+        single_output = False
+    elif isinstance(clip_format, (list, tuple)):
+        clip_formats = clip_format
+        single_output = False
+    else:
+        clip_formats = (clip_format,)  # Use provided format as a list
+        single_output = True
+    answer = _paste(clip_formats)
+    if single_output:
+        return answer[clip_format]
+    else:
+        return answer
 
+def copy(data, clip_format=DEFAULT_MIME):
+    """
+    Copies the provided data to the Windows clipboard in the specified clipboard format.
+    It makes use of Windows API functions to manage the clipboard.
+    The data parameter can also be a dictionary is provided, it can copy multiple formats in one
+    operation.  The function ensures to acquire a valid window handle and clipboard
+    ownership before performing the operation.
+
+    For multiplatform compatibility, this function is made to accept the POSIX MIME types.
+    The mapping between the MIME Types and CF Formats is the given in the CF_MIME_MAPPINGS tuple list.
+
+    :param data: The text or dictionary to be copied to the clipboard. If a
+        dictionary is provided, each key-value pair represents a clipboard format
+        and its corresponding text content.
+    :type data: str | dict
+    :param clip_format: The clipboard format for the provided text. It defaults to
+        CF_UNICODETEXT. If a string is provided, it will be converted to the
+        appropriate clipboard format using a predefined mapping.
+    :type clip_format: int | str
+    :return: None
+    :rtype: None
+    :raises ValueError: If invalid data or format is provided or an error occurs
+        during the clipboard operation.
+    """
+    if isinstance(data, dict):
+        contents = data
+    else:
+        contents = {clip_format: data}
+    return _copy(contents)
 
 def clear():
-    """Clear the clipboard
-    
-    Returns:
-        bool: True if successful, False otherwise
-    """
-    return _get_clipboard().clear()
+    """Clears the clipboard content by copying an empty string to it."""
+    return _copy({DEFAULT_MIME: ""})

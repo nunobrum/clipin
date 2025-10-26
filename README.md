@@ -20,8 +20,8 @@ pip install clipin
 ## 📦 Usage
 
 ```python
-from clipin import Clipboard
-cb = Clipboard()
-cb.copy("Hello, World!")
-print(cb.paste())  # Outputs: Hello, World!
+import clipin
+
+clipin.copy("Hello, World!")
+print(clipin.paste())  # Outputs: Hello, World!
 
