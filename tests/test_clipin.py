@@ -4,7 +4,7 @@ import clipin
 from clipin import ClipboardError
 
 
-class TestClipBeast(unittest.TestCase):
+class TestClipin(unittest.TestCase):
 
     def test_text_plain_roundtrip(self):
         text = "Hello from clipin!"

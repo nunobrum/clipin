@@ -202,11 +202,11 @@ if sys.platform.startswith("win"):
         for mime, cf in MIME_CF_MAPPINGS:
             if mime == mimep:
                 return cf
-        raise IndexError(f"MIME {mimep} has no corresponding CF Format")
+        raise ClipboardError(f"MIME {mimep} has no corresponding CF Format")
 
     def cf_to_mime(cfp):
         if cfp not in STANDARD_FORMAT_DESCRIPTION:
-            raise IndexError(f"CF Code {cfp} not supported")
+            raise ClipboardError(f"CF Code {cfp} not supported")
         for mime, cf in MIME_CF_MAPPINGS:
             if cf == cfp:
                 return mime
@@ -426,6 +426,9 @@ if sys.platform.startswith("win"):
         with clipboard(None):
 
             for clip_format in clip_formats:
+                # Transform MIME types to CF codes
+                if isinstance(clip_format, str):
+                    clip_format = mime_to_cf(clip_format)
                 handle = safeGetClipboardData(clip_format)
                 if not handle:
                     answer[clip_format] = None
@@ -437,7 +440,7 @@ if sys.platform.startswith("win"):
                         text = string_at(safeGlobalLock(handle), size)
                         safeGlobalUnlock(handle)
                         if clip_format in TEXT_FORMATS_NEEDING_ENCONDING:
-                            text.decode(ENCODING)
+                            text = text.decode(ENCODING)
                     answer[clip_format] = text
 
         # now will see if only one is returned or the complete list
