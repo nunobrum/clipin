@@ -309,7 +309,7 @@ if sys.platform.startswith("win"):
             safeCloseClipboard()
 
 
-    def copy(data, clip_format=CF_UNICODETEXT):
+    def copy(data: dict|str|bytes, clip_format: str|int =CF_UNICODETEXT):
         """
         Copies the provided data to the Windows clipboard in the specified clipboard format.
         It makes use of Windows API functions to manage the clipboard.
@@ -388,7 +388,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format=CF_UNICODETEXT, use_mime=False) -> str | dict[str, str|bytes]:
+    def paste(clip_format: str|int = None, use_mime=False) -> str | dict[str, str|bytes]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -405,7 +405,7 @@ if sys.platform.startswith("win"):
 
         :return: If a single format is provided, returns the data for that format,
             decoded accordingly based on the format type. If multiple formats are
-            provided, returns a dictionary where the keys are format types and the
+            provided, return a dictionary where the keys are format types and the
             values are the respective data retrieved. In case of failure or empty
             clipboard data for any specific format, the value will be None.
         :rtype: Union[str, dict[str, Union[str, bytes]]]
@@ -454,7 +454,7 @@ if sys.platform.startswith("win"):
                 return answer
 
 
-    def available_formats() -> list[str]:
+    def available_formats() -> list[str|int]:
         formats = []
         with clipboard(None):
             fmt = 0
@@ -469,38 +469,75 @@ if sys.platform.startswith("win"):
 elif sys.platform == "darwin":
 
     # macOS implementation
-    def paste():
+    def paste(clip_format: str|None = None):
+        """
+        Gets the contents of the clipboard. If there are more than one clipboard format, it returns the
+        :param clip_format:
+        :return:
+        """
+        result = {}
         try:
-            result = {'text/plain': subprocess.check_output(['pbpaste'], text=True)}
-            try:
-                html = subprocess.check_output([
-                    'osascript', '-e', 'the clipboard as "HTML"'
-                ], stderr=subprocess.DEVNULL)
-                result['text/html'] = html.decode(errors='ignore')
-            except Exception:
-                pass
-            try:
-                png_data = subprocess.check_output(['osascript', '-e', 'get the clipboard as "PNGf"'],
-                                                   stderr=subprocess.DEVNULL)
-                result['image/png'] = png_data
-            except Exception:
-                result['image/png'] = b''
-            return result
+            if clip_format:
+                clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format,)
+            else:
+                clip_formats = None
+
+            if clip_formats is None or 'text/plain' in clip_formats:
+                try:
+                    result['text/plain'] = subprocess.check_output(['pbpaste'], text=True)
+                except:
+                    pass
+
+            if clip_formats is None or 'text/html' in clip_formats:
+                try:
+                    html = subprocess.check_output([
+                        'osascript', '-e', 'the clipboard as "HTML"'
+                    ], stderr=subprocess.DEVNULL)
+                    result['text/html'] = html.decode(errors='ignore')
+                except Exception:
+                    pass
+
+            if clip_formats is None or 'image/png' in clip_formats:
+                try:
+                    png_data = subprocess.check_output(['osascript', '-e', 'get the clipboard as "PNGf"'],
+                                                       stderr=subprocess.DEVNULL)
+                    result['image/png'] = png_data
+                except Exception:
+                    result['image/png'] = b''
+
+            if not clip_format:
+                return result
+            else:
+                if clip_format in result:
+                    return result[clip_format]
+                else:
+                    raise ClipboardError(f"{clip_format} not in clipboard. Available formats are  {result.keys()}")
+
         except Exception as e:
             raise ClipboardError(f"Failed to get clipboard data: {e}")
 
 
-    def copy(data: bytes, format_name: str):
+    def copy(data: bytes, clip_format: str = None):
+        if clip_format is None:
+            if isinstance(data, str):
+                clip_format = 'text/plain'
+            else:
+                try:
+                    data.decode("utf-8")
+                except:
+                    clip_format = 'image/png'
+                else:
+                    clip_format = 'text/html'
         try:
-            if format_name == 'text/plain':
+            if clip_format == 'text/plain':
                 p = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
                 p.communicate(input=data)
-            elif format_name == 'text/html':
+            elif clip_format == 'text/html':
                 p = subprocess.Popen(
                     ['osascript', '-e', f'set the clipboard to {{{data.decode("utf-8")} as «class HTML»}}'],
                     stdin=subprocess.PIPE)
                 p.communicate()
-            elif format_name == 'image/png':
+            elif clip_format == 'image/png':
                 raise ClipboardError(
                     "Image clipboard support on macOS requires additional tools or custom scripting.")
             else:
@@ -508,43 +545,108 @@ elif sys.platform == "darwin":
         except Exception as e:
             raise ClipboardError(f"Failed to set clipboard data: {e}")
 
+    def available_formats() -> list[str]:
+        clipboard_contents:dict = paste(None)
+        return list(clipboard_contents.keys())
+
 
 elif sys.platform.startswith("linux"):
     # Linux implementation
+    def print_xclip_missing_warning():
+        print("xclip not found. Please install xclip to use advanced clipboard features.\n"
+              "To install xclip in Debian/Ubuntu-based distributions :\n"
+              "   > sudo apt update\n"
+              "   > sudo apt install xclip\n"
+              "For Fedora/RHEL-based systems:\n"
+              "   > sudo dnf install xclip\n"
+              "For Arch-based systems:\n"
+              "   > sudo pacman -S xclip\n"
+              )
 
-    def paste():
+    def paste(clip_format: str|None = None) -> dict|bytes|str:
+        result = {}
+        if clip_format:
+            clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
+        else:
+            clip_formats = None
         try:
-            result = {'text/plain': subprocess.check_output(['xclip', '-selection', 'clipboard', '-out'], text=True)}
-            try:
-                html = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'text/html', '-out'],
-                                               text=True)
-                result['text/html'] = html
-            except:
-                pass
-            try:
-                png = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-out'])
-                result['image/png'] = png
-            except:
-                result['image/png'] = b''
-            return result
+            if clip_formats is None or 'text/plain' in clip_formats:
+                try:
+                    result['text/plain'] = subprocess.check_output(['xclip', '-selection', 'clipboard', '-out'], text=True)
+                except:
+                    pass
+
+            if  clip_formats is None or 'text/html' in clip_formats:
+                try:
+                    html = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'text/html', '-out'],
+                                                   text=True)
+                    result['text/html'] = html
+                except:
+                    pass
+
+            if  clip_formats is None or 'image/png' in clip_formats:
+                try:
+                    png = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-out'])
+                    result['image/png'] = png
+                except:
+                    pass
+
         except FileNotFoundError:
-            raise ClipboardError("xclip not found. Please install xclip to use advanced clipboard features.")
+            print_xclip_missing_warning()
+
+            import tkinter as tk
+            r = tk.Tk()
+            r.withdraw()  # Hide the main window
+            return {'text/html' : r.clipboard_get()}
         except Exception as e:
             raise ClipboardError(f"Failed to get clipboard data: {e}")
 
+        if not clip_format:
+            return result
+        else:
+            if clip_format in result:
+                return result[clip_format]
+            else:
+                raise ClipboardError(f"{clip_format} not in clipboard. Available formats are  {result.keys()}")
 
-    def copy(data: bytes, format_name: str):
+
+    def copy(data, clip_format: str = None):
+        if clip_format is None:
+            if isinstance(data, str):
+                clip_format = 'text/plain'
+                data = data.encode()
+            else:
+                try:
+                    data.decode("utf-8")  # if it an
+                except:
+                    clip_format = 'image/png'
+                else:
+                    clip_format = 'text/html'
+
         try:
-            if format_name == 'text/plain':
+            if clip_format == 'text/plain':
+                data = data.encode() if isinstance(data, str) else data
                 p = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-            elif format_name == 'text/html':
+            elif clip_format == 'text/html':
                 p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'text/html'], stdin=subprocess.PIPE)
-            elif format_name == 'image/png':
+            elif clip_format == 'image/png':
                 p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
             else:
                 raise ClipboardError("Unsupported format for Linux")
             p.communicate(input=data)
         except FileNotFoundError:
-            raise ClipboardError("xclip not found. Please install xclip to use advanced clipboard features.")
+            print_xclip_missing_warning()
+            if clip_format.startswith('text'):
+
+                import tkinter as tk
+                r = tk.Tk()
+                r.withdraw()  # Hide the main window
+                r.clipboard_clear()
+                r.clipboard_append(data.decode())
+                r.update()  # Keep data even after script exits
         except Exception as e:
             raise ClipboardError(f"Failed to set clipboard data: {e}")
+
+    def available_formats() -> list[str]:
+        clipboard_contents:dict = paste(None)
+        return list(clipboard_contents.keys())
