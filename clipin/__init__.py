@@ -35,7 +35,6 @@ if sys.platform.startswith("win"):
     # Windows-related clipboard functions:
     class CheckedCall(object):
         def __init__(self, f):
-            self.f = f
             super(CheckedCall, self).__setattr__("f", f)
 
         def __call__(self, *args):
@@ -389,7 +388,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format: str|int = CF_UNICODETEXT, use_mime=False) -> str | dict[str, str|bytes]:
+    def paste(clip_format: str|int = None, use_mime=False) -> str | dict[str, str|bytes]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -406,7 +405,7 @@ if sys.platform.startswith("win"):
 
         :return: If a single format is provided, returns the data for that format,
             decoded accordingly based on the format type. If multiple formats are
-            provided, returns a dictionary where the keys are format types and the
+            provided, return a dictionary where the keys are format types and the
             values are the respective data retrieved. In case of failure or empty
             clipboard data for any specific format, the value will be None.
         :rtype: Union[str, dict[str, Union[str, bytes]]]
