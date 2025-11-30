@@ -9,7 +9,7 @@ class TestClipin(unittest.TestCase):
     def test_text_plain_roundtrip(self):
         text = "Hello from clipin!"
         clipin.copy(text)
-        data = clipin.paste()
+        data = clipin.paste('text/plain')
         self.assertIn("Hello", data)
 
     def test_available_formats_returns_list(self):
@@ -24,7 +24,7 @@ class TestClipin(unittest.TestCase):
     def test_get_returns_dict(self):
         clipin.copy("Sample Text")
         result = clipin.paste()
-        self.assertIsInstance(result, str)
+        self.assertIsInstance(result, dict)
 
         result = clipin.paste('text/plain')
         self.assertIsInstance(result, str)
