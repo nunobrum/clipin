@@ -7,10 +7,10 @@ import time
 class ClipboardError(Exception):
     pass
 
+converted_types_in_copy = (str, int, float, bool)
 
 def _stringify_text(text):
-    acceptedTypes = (str, int, float, bool)
-    if not isinstance(text, acceptedTypes):
+    if not isinstance(text, converted_types_in_copy):
         raise ClipboardError(
             'only str, int, float, and bool values can be copied to the clipboard, not %s' % text.__class__.__name__)
     return str(text)
@@ -353,7 +353,7 @@ if sys.platform.startswith("win"):
                 safeEmptyClipboard()
 
                 for clip_format, text in text_dict.items():
-                    if not isinstance(text, bytes):
+                    if isinstance(text, converted_types_in_copy):
                         text = _stringify_text(text)  # Converts non-str values to str.
                         if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
                             text = text.encode('utf-8')
@@ -605,6 +605,8 @@ elif sys.platform == "darwin":
                 cf_type = NF_MIME_MAPPINGS.get(paste_type, paste_type)
                 if cf_type.startswith("NSPasteboardType"):
                     cf_type = getattr(AppKit, cf_type)
+                if isinstance(data, converted_types_in_copy):
+                    data = _stringify_text(data)  # Converts non-str values to str.
                 if cf_type in TEXT_FORMATS_NEEDING_ENCODING and isinstance(data, str):
                     coding = TEXT_FORMATS_NEEDING_ENCODING[cf_type]
                     data = data.encode(coding)
@@ -694,7 +696,8 @@ elif sys.platform.startswith("linux"):
     def copy(data, clip_format: str = None):
         if clip_format is None:
             # Will try to determine a type
-            if isinstance(data, str):
+            if isinstance(data, converted_types_in_copy):
+                data = _stringify_text(data)  # Converts non-str values to str.
                 clip_format = 'text/plain'
             elif isinstance(data, dict):
                 if len(data) == 0:
