@@ -197,6 +197,9 @@ if sys.platform.startswith("win"):
         for mime, cf in MIME_CF_MAPPINGS:
             if mime == mimep:
                 return cf
+        for cf, desc in STANDARD_FORMAT_DESCRIPTION.items():
+            if desc == mimep:
+                return cf
         raise ClipboardError(f"MIME {mimep} has no corresponding CF Format")
 
     def cf_to_mime(cfp):
@@ -206,6 +209,13 @@ if sys.platform.startswith("win"):
             if cf == cfp:
                 return mime
         return STANDARD_FORMAT_DESCRIPTION[cfp]
+
+    def _try_mime(cf_or_mime):
+        try:
+            cf_or_mime = cf_to_mime(cf_or_mime)
+        except ClipboardError:
+            pass
+        return cf_or_mime
 
     safeCreateWindowExA = CheckedCall(windll.user32.CreateWindowExA)
     safeCreateWindowExA.argtypes = [DWORD, LPCSTR, LPCSTR, DWORD, INT, INT,
@@ -383,7 +393,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format: str|int = None, use_mime=False) -> str | dict[str, str|bytes]:
+    def paste(clip_format: str|int = None, use_mime=True) -> str | dict[str, str|bytes]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -444,12 +454,12 @@ if sys.platform.startswith("win"):
         else:
             # if it is a list, check whether to use MIME types
             if use_mime:
-                return {cf_to_mime(cfp): data for cfp, data in answer.items()}
+                return {_try_mime(cfp): data for cfp, data in answer.items()}
             else:
                 return answer
 
 
-    def available_formats() -> list[str|int]:
+    def available_formats(use_mime=True) -> list[str|int]:
         formats = []
         with clipboard(None):
             fmt = 0
@@ -457,7 +467,10 @@ if sys.platform.startswith("win"):
                 fmt = safeEnumClipboardFormats(fmt)
                 if fmt == 0:
                     break
-                formats.append(fmt)
+                if use_mime:
+                    formats.append(_try_mime(fmt))
+                else:
+                    formats.append(fmt)
             return formats
 
 

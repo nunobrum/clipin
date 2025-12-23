@@ -9,7 +9,7 @@ and images (where supported)—without third-party dependencies.
 - 🧩 Supports MIME formats (1):
   - `text/plain`
   - `text/html`
-  - `image/png`
+  - `image/tiff`
 
 (1) requires xclip in linux and pyobjc in MacOS. If these are not present, it will support only 
 basic text copy and paste.
@@ -20,17 +20,23 @@ as well the OS identifiers, in this case losing code compatibility.
 
 Here is a non-exhaustive list of the mappings done:
 
-| Linux      | Windows (3)         | MacOSX - darwin (4)                              |
-|------------|---------------------|--------------------------------------------------|
+| Linux      | Windows (2)         | MacOSX - darwin (3)                             |
+|------------|---------------------|-------------------------------------------------|
 | text/plain | CF_TEXT = 1         | NSPasteboardTypeString = public.utf8-plain-text |
-| text/html  | CF_UNICODETEXT = 13 | NSPasteboardTypeHTML = public.html               |
-| image/bmp  | CF_BITMAP = 2       | No equivalent (2)                                |
-| image/png  | No equivalent (2)   | NSPasteboardTypePNG = public.png                 |
-| image/tiff | CF_TIFF = 6         | NSPasteboardTypeTIFF = public.tiff               |
+| text/html  | CF_UNICODETEXT = 13 | NSPasteboardTypeHTML = public.html              |
+| image/bmp  | CF_BITMAP = 2       | No equivalent (5)                               |
+| image/png  | No equivalent (4)   | NSPasteboardTypePNG = public.png                |
+| image/tiff | CF_TIFF = 6         | NSPasteboardTypeTIFF = public.tiff              |
 
-(2) Advise to use pil library to make the translation.
-(3) Windows uses integer numbers to represent different clipboard formats
-(4) MacOSX defines in the AppKit library the strings for the most commonly used formats
+(2) Windows uses integer numbers to represent different clipboard formats
+
+(3) MacOSX defines in the AppKit library the strings for the most commonly used formats
+
+(4) Either use the CF_DIB or CF_DIBV5 for Windows compressed bitmaps<br>
+    Windows places more information on the clipboard, additional manipulation may be needed.<br>
+    See https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats for more details.
+
+(5) MacOSX does not have a native bitmap format, use PNG or TIFF instead
 
 ## 🚀 Installation
 
