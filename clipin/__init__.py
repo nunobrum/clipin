@@ -545,7 +545,8 @@ elif sys.platform == "darwin":
                         coding = TEXT_FORMATS_NEEDING_ENCODING[pb_type]
                         data = data.decode(coding)
                     mime_type = APPLE_MIME_MAPPINGS.get(pb_type, pb_type)
-                    result[mime_type] = data
+                    if clip_formats == "*/*" or mime_type in clip_formats or pb_type in clip_formats:
+                        result[mime_type] = data
 
         else:
             display_warning(clip_format)
