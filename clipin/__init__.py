@@ -7,13 +7,10 @@ import time
 class ClipboardError(Exception):
     pass
 
-
-PY2 = sys.version_info[0] == 2
-
+converted_types_in_copy = (str, int, float, bool)
 
 def _stringify_text(text):
-    acceptedTypes = (str, int, float, bool)
-    if not isinstance(text, acceptedTypes):
+    if not isinstance(text, converted_types_in_copy):
         raise ClipboardError(
             'only str, int, float, and bool values can be copied to the clipboard, not %s' % text.__class__.__name__)
     return str(text)
@@ -29,8 +26,6 @@ if sys.platform.startswith("win"):
     import contextlib
 
     GMEM_MOVEABLE = 0x0002
-
-    ENCODING = 'utf-8'
 
     # Windows-related clipboard functions:
     class CheckedCall(object):
@@ -151,7 +146,7 @@ if sys.platform.startswith("win"):
         CF_UNICODETEXT: "UNICODE TEXT",
         CF_WAVE: "WAVE",
     }
-    TEXT_FORMATS_NEEDING_ENCONDING = (CF_TEXT, CF_DSPTEXT)
+    TEXT_FORMATS_NEEDING_ENCODING = (CF_TEXT, CF_DSPTEXT)
 
     # --- Base Mappings ---
     MIME_CF_MAPPINGS = (
@@ -202,6 +197,9 @@ if sys.platform.startswith("win"):
         for mime, cf in MIME_CF_MAPPINGS:
             if mime == mimep:
                 return cf
+        for cf, desc in STANDARD_FORMAT_DESCRIPTION.items():
+            if desc == mimep:
+                return cf
         raise ClipboardError(f"MIME {mimep} has no corresponding CF Format")
 
     def cf_to_mime(cfp):
@@ -211,6 +209,13 @@ if sys.platform.startswith("win"):
             if cf == cfp:
                 return mime
         return STANDARD_FORMAT_DESCRIPTION[cfp]
+
+    def _try_mime(cf_or_mime):
+        try:
+            cf_or_mime = cf_to_mime(cf_or_mime)
+        except ClipboardError:
+            pass
+        return cf_or_mime
 
     safeCreateWindowExA = CheckedCall(windll.user32.CreateWindowExA)
     safeCreateWindowExA.argtypes = [DWORD, LPCSTR, LPCSTR, DWORD, INT, INT,
@@ -358,17 +363,17 @@ if sys.platform.startswith("win"):
                 safeEmptyClipboard()
 
                 for clip_format, text in text_dict.items():
-                    if (not PY2) and (not isinstance(text, bytes)):
+                    if isinstance(text, converted_types_in_copy):
                         text = _stringify_text(text)  # Converts non-str values to str.
-                        if clip_format in TEXT_FORMATS_NEEDING_ENCONDING:
-                            text = text.encode(ENCODING)
+                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                            text = text.encode('utf-8')
 
                     if text:
                         # http://msdn.com/ms649051
                         # If the hMem parameter identifies a memory object,
                         # the object must have been allocated using the
                         # function with the GMEM_MOVEABLE flag.
-                        if (not PY2) and isinstance(text, bytes):  # This passes in an 8 bit format.
+                        if isinstance(text, bytes):  # This passes in an 8 bit format.
                             count = len(text) + 1
                             handle = safeGlobalAlloc(GMEM_MOVEABLE,
                                                      count * sizeof(CHAR))
@@ -388,7 +393,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format: str|int = None, use_mime=False) -> str | dict[str, str|bytes]:
+    def paste(clip_format: str|int = None, use_mime=True) -> str | dict[str, str|bytes]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -439,8 +444,8 @@ if sys.platform.startswith("win"):
                         size = safeGlobalSize(handle)
                         text = string_at(safeGlobalLock(handle), size)
                         safeGlobalUnlock(handle)
-                        if clip_format in TEXT_FORMATS_NEEDING_ENCONDING:
-                            text = text.decode(ENCODING)
+                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                            text = text.decode('utf-8')
                     answer[clip_format] = text
 
         # now will see if only one is returned or the complete list
@@ -449,12 +454,12 @@ if sys.platform.startswith("win"):
         else:
             # if it is a list, check whether to use MIME types
             if use_mime:
-                return {cf_to_mime(cfp): data for cfp, data in answer.items()}
+                return {_try_mime(cfp): data for cfp, data in answer.items()}
             else:
                 return answer
 
 
-    def available_formats() -> list[str|int]:
+    def available_formats(use_mime=True) -> list[str|int]:
         formats = []
         with clipboard(None):
             fmt = 0
@@ -462,88 +467,192 @@ if sys.platform.startswith("win"):
                 fmt = safeEnumClipboardFormats(fmt)
                 if fmt == 0:
                     break
-                formats.append(fmt)
+                if use_mime:
+                    formats.append(_try_mime(fmt))
+                else:
+                    formats.append(fmt)
             return formats
 
 
 elif sys.platform == "darwin":
+    import logging
 
-    # macOS implementation
-    def paste(clip_format: str|None = None):
+    try:
+        import AppKit
+        from AppKit import NSPasteboard
+        from Foundation import NSData
+    except ImportError:
+        _use_appkit = False
+        NF_MIME_MAPPINGS = {}
+    else:
+        _use_appkit = True
+        NF_MIME_MAPPINGS = {
+            'text/plain': 'NSPasteboardTypeString',
+            'text/html': 'NSPasteboardTypeHTML',
+            'text/rtf': 'NSPasteboardTypeRTF',
+            'image/png': 'NSPasteboardTypePNG',
+            'image/tiff': 'NSPasteboardTypeTIFF',
+        }
+        APPLE_MIME_MAPPINGS = {
+            'public.utf8-plain-text': 'text/plain',
+        }
+
+        TEXT_FORMATS_NEEDING_ENCODING = {
+            'public.utf8-plain-text': 'utf-8',
+            'NSStringPboardType': 'utf-8',
+            'public.utf16-external-plain-text': 'utf-16'
+
+        }
+
+
+    def display_warning(clip_format):
+        if not _use_appkit and clip_format != 'text/plain':
+            print("MIME clipboard support on macOS requires additional libraries.\n" \
+                  "Install PyObjC + Cocoa using the commnand: pip install pyobjc\n"
+                  "use 'text/plain' as clip_format to avoid this message.")
+
+
+    # macOS implementation.
+    # TODO: For some reason in my installation the 3.9 in python doesn't support the | in typing definitions
+    def paste(clip_format = None):
         """
         Gets the contents of the clipboard. If there are more than one clipboard format, it returns the
         :param clip_format:
         :return:
         """
         result = {}
-        try:
-            if clip_format:
-                clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format,)
+        if _use_appkit:
+            if clip_format is None or clip_format == 0 or clip_format == '' or (
+                isinstance(clip_format, (list, tuple)) and len(clip_format) == 0):
+                # Will retrieve the list of available formats
+                clip_formats = "*/*"
+                single_output = False
+            elif isinstance(clip_format, (list, tuple)):
+                clip_formats = clip_format
+                single_output = False
             else:
-                clip_formats = None
+                clip_formats = (clip_format,)  # Use provided format as a list
+                single_output = True
 
-            if clip_formats is None or 'text/plain' in clip_formats:
-                try:
-                    result['text/plain'] = subprocess.check_output(['pbpaste'], text=True)
-                except:
-                    pass
+            pb = NSPasteboard.generalPasteboard()
 
-            if clip_formats is None or 'text/html' in clip_formats:
-                try:
-                    html = subprocess.check_output([
-                        'osascript', '-e', 'the clipboard as "HTML"'
-                    ], stderr=subprocess.DEVNULL)
-                    result['text/html'] = html.decode(errors='ignore')
-                except Exception:
-                    pass
+            for pb_type in pb.types():
+                data = pb.dataForType_(pb_type)
+                if data is not None:
+                    # Tries to convert if possible
+                    data = bytes(data)
+                    if pb_type in TEXT_FORMATS_NEEDING_ENCODING:
+                        coding = TEXT_FORMATS_NEEDING_ENCODING[pb_type]
+                        data = data.decode(coding)
+                    mime_type = APPLE_MIME_MAPPINGS.get(pb_type, pb_type)
+                    result[mime_type] = data
 
-            if clip_formats is None or 'image/png' in clip_formats:
-                try:
-                    png_data = subprocess.check_output(['osascript', '-e', 'get the clipboard as "PNGf"'],
-                                                       stderr=subprocess.DEVNULL)
-                    result['image/png'] = png_data
-                except Exception:
-                    result['image/png'] = b''
+        else:
+            display_warning(clip_format)
+            try:
+                result['text/plain'] = subprocess.check_output(['pbpaste'], text=True)
+            except Exception as e:
+                raise ClipboardError(f"Failed to get clipboard data: {e}")
+            single_output = clip_format == 'text/plain'
 
-            if not clip_format:
-                return result
-            else:
-                if clip_format in result:
-                    return result[clip_format]
-                else:
-                    raise ClipboardError(f"{clip_format} not in clipboard. Available formats are  {result.keys()}")
+        if single_output and clip_format in result:
+            result = result[clip_format]
 
-        except Exception as e:
-            raise ClipboardError(f"Failed to get clipboard data: {e}")
+        return result
 
 
-    def copy(data: bytes, clip_format: str = None):
-        if clip_format is None:
-            if isinstance(data, str):
+    def copy(data, clip_format: str = None):
+        """
+        Copies the provided data to the MAC OSX clipboard in the specified clipboard format.
+        If PyObjC library is installed, it allows the user to set one or more clipboard formats.
+        If PyObjC is not found it will try to use pbcopy tool instead, but in this case, only
+        plain UTF-8 compatible strings are allowed.
+
+        With pbcopy, data must be a str type. With PyObjC data type depends on the clip format
+        being used.
+
+        These are the predefined MIME formats in Mac OSX (Monterey):
+
+        NSPasteboardTypeColor: com.apple.cocoa.pasteboard.color
+        NSPasteboardTypeFileURL: public.file-url
+        NSPasteboardTypeFindPanelSearchOptions: com.apple.cocoa.pasteboard.find-panel-search-options
+        NSPasteboardTypeFont: com.apple.cocoa.pasteboard.character-formatting
+        NSPasteboardTypeHTML: public.html
+        NSPasteboardTypeMultipleTextSelection: com.apple.cocoa.pasteboard.multiple-text-selection
+        NSPasteboardTypePDF: com.adobe.pdf
+        NSPasteboardTypePNG: public.png
+        NSPasteboardTypeRTF: public.rtf
+        NSPasteboardTypeRTFD: com.apple.flat-rtfd
+        NSPasteboardTypeRuler: com.apple.cocoa.pasteboard.paragraph-formatting
+        NSPasteboardTypeSound: com.apple.cocoa.pasteboard.sound
+        NSPasteboardTypeString: public.utf8-plain-text
+        NSPasteboardTypeTIFF: public.tiff
+        NSPasteboardTypeTabularText: public.utf8-tab-separated-values-text
+        NSPasteboardTypeTextFinderOptions: com.apple.cocoa.pasteboard.find-panel-search-options
+        NSPasteboardTypeURL: public.url
+
+        For an updated list issue the following commands:
+        >>> import AppKit
+        >>> >>> print('\n'.join(f"{a}: getattr(AppKit,a)" for a in dir(AppKit) if a.startswith('NSPasteboardType')))
+
+
+        Multiple data formats can be set at the same time. In this case data should be
+        a dictionary, where the keys represent the
+
+        """
+        if _use_appkit:
+            pb = NSPasteboard.generalPasteboard()
+            pb.clearContents()
+
+            if not isinstance(data, dict):
+
+                if clip_format is None or len(clip_format)==0:
+                    clip_format = 'text/plain'
+
+                data = {clip_format: data}
+
+
+            copies_done = []
+            for paste_type, data in data.items():
+                # Need to convert to apple's recognized types
+                cf_type = NF_MIME_MAPPINGS.get(paste_type, paste_type)
+                if cf_type.startswith("NSPasteboardType"):
+                    cf_type = getattr(AppKit, cf_type)
+                if isinstance(data, converted_types_in_copy):
+                    data = _stringify_text(data)  # Converts non-str values to str.
+                if cf_type in TEXT_FORMATS_NEEDING_ENCODING and isinstance(data, str):
+                    coding = TEXT_FORMATS_NEEDING_ENCODING[cf_type]
+                    data = data.encode(coding)
+                nsdata = NSData.dataWithBytes_length_(data, len(data))
+                pb.setData_forType_(nsdata, cf_type)
+                copies_done.append(cf_type)
+
+            # now verify if copy was successful
+            verify_copy = False
+            if verify_copy:
+                for pb_type in pb.types():
+                    if pb_type in copies_done:
+                        del copies_done[copies_done.index(pb_type)]
+                if len(copies_done) > 0:
+                    raise ClipboardError(f"Unable to copy these formats: {copies_done}")
+
+        else:
+            display_warning(clip_format)
+
+            if clip_format is None or len(clip_format)==0:
                 clip_format = 'text/plain'
-            else:
-                try:
-                    data.decode("utf-8")
-                except:
-                    clip_format = 'image/png'
-                else:
-                    clip_format = 'text/html'
-        try:
+    
             if clip_format == 'text/plain':
+                if isinstance(data, str):
+                    data = data.encode('utf-8')
+                elif not isinstance(data, bytes):
+                    raise ClipboardError("For text formats data shall be str or bytes")
+
                 p = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
                 p.communicate(input=data)
-            elif clip_format == 'text/html':
-                p = subprocess.Popen(
-                    ['osascript', '-e', f'set the clipboard to {{{data.decode("utf-8")} as «class HTML»}}'],
-                    stdin=subprocess.PIPE)
-                p.communicate()
-            elif clip_format == 'image/png':
-                raise ClipboardError(
-                    "Image clipboard support on macOS requires additional tools or custom scripting.")
             else:
-                raise ClipboardError("Unsupported format for macOS")
-        except Exception as e:
-            raise ClipboardError(f"Failed to set clipboard data: {e}")
+                raise ClipboardError(f"MIME type not supported : '{clip_format}'")
+
 
     def available_formats() -> list[str]:
         clipboard_contents:dict = paste(None)
@@ -552,6 +661,9 @@ elif sys.platform == "darwin":
 
 elif sys.platform.startswith("linux"):
     # Linux implementation
+    def is_text_format(clip_format: str) -> bool:
+        return clip_format is None or clip_format.startswith('text')
+
     def print_xclip_missing_warning():
         print("xclip not found. Please install xclip to use advanced clipboard features.\n"
               "To install xclip in Debian/Ubuntu-based distributions :\n"
@@ -568,38 +680,22 @@ elif sys.platform.startswith("linux"):
         if clip_format:
             clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
         else:
-            clip_formats = None
-        try:
-            if clip_formats is None or 'text/plain' in clip_formats:
-                try:
-                    result['text/plain'] = subprocess.check_output(['xclip', '-selection', 'clipboard', '-out'], text=True)
-                except:
-                    pass
+            clip_formats = available_formats()
 
-            if  clip_formats is None or 'text/html' in clip_formats:
-                try:
-                    html = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'text/html', '-out'],
-                                                   text=True)
-                    result['text/html'] = html
-                except:
-                    pass
+        for cf in clip_formats:
+            try:
+                result[cf] = subprocess.check_output(
+                    ['xclip', '-selection', 'clipboard', '-t', cf, '-out'], text=is_text_format(cf))
 
-            if  clip_formats is None or 'image/png' in clip_formats:
-                try:
-                    png = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'image/png', '-out'])
-                    result['image/png'] = png
-                except:
-                    pass
-
-        except FileNotFoundError:
-            print_xclip_missing_warning()
-
-            import tkinter as tk
-            r = tk.Tk()
-            r.withdraw()  # Hide the main window
-            return {'text/html' : r.clipboard_get()}
-        except Exception as e:
-            raise ClipboardError(f"Failed to get clipboard data: {e}")
+            except FileNotFoundError:
+                print_xclip_missing_warning()
+                if 'text/html' in clip_format:
+                    import tkinter as tk
+                    r = tk.Tk()
+                    r.withdraw()  # Hide the main window
+                    return {'text/html' : r.clipboard_get()}
+            except Exception:
+                pass
 
         if not clip_format:
             return result
@@ -612,41 +708,58 @@ elif sys.platform.startswith("linux"):
 
     def copy(data, clip_format: str = None):
         if clip_format is None:
-            if isinstance(data, str):
+            # Will try to determine a type
+            if isinstance(data, converted_types_in_copy):
+                data = _stringify_text(data)  # Converts non-str values to str.
                 clip_format = 'text/plain'
-                data = data.encode()
+            elif isinstance(data, dict):
+                if len(data) == 0:
+                    raise ClipboardError(f"If dict is passed, it should contain at least one element.")
+                else:
+                    print_warning =  len(data) > 1
+                    clip_format, data = next(iter(data.items()))
+                    if print_warning:
+                        print(f"Sorry! Multiple formats not supported in Linux.")
             else:
                 try:
-                    data.decode("utf-8")  # if it an
-                except:
-                    clip_format = 'image/png'
+                    data.decode('utf-8')  # if it decodes, it is text
+                except UnicodeDecodeError:
+                    # try to find some clues from the data being passed
+                    # if it starts with PNG header bytes
+                    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+                        clip_format = 'image/png'
+                    # JPEG header bytes
+                    elif data.startswith(b'\xff\xd8\xff'):
+                        clip_format = 'image/jpeg'
+                    # GIF header bytes
+                    elif data.startswith(b'GIF8'):
+                        clip_format = 'image/gif'
                 else:
-                    clip_format = 'text/html'
+                    clip_format = 'text/plain'
 
+        if is_text_format(clip_format):
+            data = data.encode('utf-8') if isinstance(data, str) else data
         try:
-            if clip_format == 'text/plain':
-                data = data.encode() if isinstance(data, str) else data
-                p = subprocess.Popen(['xclip', '-selection', 'clipboard'], stdin=subprocess.PIPE)
-            elif clip_format == 'text/html':
-                p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'text/html'], stdin=subprocess.PIPE)
-            elif clip_format == 'image/png':
-                p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', 'image/png'], stdin=subprocess.PIPE)
-            else:
-                raise ClipboardError("Unsupported format for Linux")
+            p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', clip_format], stdin=subprocess.PIPE)
             p.communicate(input=data)
         except FileNotFoundError:
             print_xclip_missing_warning()
-            if clip_format.startswith('text'):
-
+            if is_text_format(clip_format):
                 import tkinter as tk
                 r = tk.Tk()
                 r.withdraw()  # Hide the main window
                 r.clipboard_clear()
-                r.clipboard_append(data.decode())
+                r.clipboard_append(data.decode('utf-8'))
                 r.update()  # Keep data even after script exits
         except Exception as e:
             raise ClipboardError(f"Failed to set clipboard data: {e}")
 
     def available_formats() -> list[str]:
-        clipboard_contents:dict = paste(None)
-        return list(clipboard_contents.keys())
+        try:
+            formats = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-out'], text=True)
+            formats = formats.splitlines()
+        except FileNotFoundError:
+            formats = ['text/plain']
+        except Exception:
+            formats = []
+        return formats
