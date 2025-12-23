@@ -20,19 +20,14 @@ as well the OS identifiers, in this case losing code compatibility.
 
 Here is a non-exhaustive list of the mappings done:
 
-+------------+-------------------+--------------------------------------------------+
-| Linux       |  Windows (3)     | MacOSX - darwin (4)                              |
-+------------+-------------------+--------------------------------------------------+
-| text/plain | CF_TEXT=1         | MNSPasteboardTypeString = public.utf8-plain-text |
-+------------+-------------------+--------------------------------------------------+    
-| text/html  | CF_UNICODETEXT=13 | NSPasteboardTypeHTML = public.html               |
-+------------+-------------------+--------------------------------------------------+
-| image/bmp  | CF_BITMAP=2       | No equivalent (2)                                |
-+------------+-------------------+--------------------------------------------------+
-| image/png  | No equivalent (2) | NSPasteboardTypePNG = public.png                 |
-+------------+-------------------+--------------------------------------------------+
-| image/tiff | CF_TIFF=6         | NSPasteboardTypeTIFF = public.tiff               |
-+------------+-------------------+--------------------------------------------------+
+| Linux      | Windows (3)         | MacOSX - darwin (4)                              |
+|------------|---------------------|--------------------------------------------------|
+| text/plain | CF_TEXT = 1         | NSPasteboardTypeString = public.utf8-plain-text |
+| text/html  | CF_UNICODETEXT = 13 | NSPasteboardTypeHTML = public.html               |
+| image/bmp  | CF_BITMAP = 2       | No equivalent (2)                                |
+| image/png  | No equivalent (2)   | NSPasteboardTypePNG = public.png                 |
+| image/tiff | CF_TIFF = 6         | NSPasteboardTypeTIFF = public.tiff               |
+
 (2) Advise to use pil library to make the translation.
 (3) Windows uses integer numbers to represent different clipboard formats
 (4) MacOSX defines in the AppKit library the strings for the most commonly used formats
