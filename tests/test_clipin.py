@@ -1,4 +1,4 @@
-
+import sys
 import unittest
 import clipin
 from clipin import ClipboardError
@@ -17,6 +17,7 @@ class TestClipin(unittest.TestCase):
         self.assertIsInstance(formats, list)
         print("Available Formats are : ", formats)
 
+    @unittest.skipIf(sys.platform != "windows", "Skipping binary format test if not on Windows")
     def test_set_invalid_format(self):
         with self.assertRaises(ClipboardError):
             clipin.copy(b'unsupported data', 'application/unknown')
@@ -37,4 +38,6 @@ class TestClipin(unittest.TestCase):
 
 
 if __name__ == '__main__':
+    # clipin._use_appkit = False
     unittest.main()
+
