@@ -45,8 +45,8 @@ class TestClipin(unittest.TestCase):
         with open(image_path, 'rb') as f:
             image_data = f.read()
 
-        clipin.copy(image_data, 'image/vnd.ms-photo')
-        pasted_data = clipin.paste('image/vnd.ms-photo')
+        clipin.copy(image_data, 'image/png')
+        pasted_data = clipin.paste('image/png')
         # save pasted data to a file for manual verification if needed
         # with open(os.path.join(os.path.dirname(__file__), 'pasted_image.png'), 'wb') as f:
         #     f.write(pasted_data[:-1])  # Remove the last byte added during copy on Windows
