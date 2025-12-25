@@ -2,6 +2,7 @@ import sys
 import subprocess
 import ctypes
 import time
+from typing import Union, Optional, Dict, List
 
 
 class ClipboardError(Exception):
@@ -314,7 +315,7 @@ if sys.platform.startswith("win"):
             safeCloseClipboard()
 
 
-    def copy(data: dict|str|bytes, clip_format: str|int =CF_UNICODETEXT):
+    def copy(data: Union[dict, str, bytes], clip_format: Union[str, int] = CF_UNICODETEXT):
         """
         Copies the provided data to the Windows clipboard in the specified clipboard format.
         It makes use of Windows API functions to manage the clipboard.
@@ -328,11 +329,11 @@ if sys.platform.startswith("win"):
         :param data: The text or dictionary to be copied to the clipboard. If a
             dictionary is provided, each key-value pair represents a clipboard format
             and its corresponding text content.
-        :type data: str | dict
+        :type data: str or dict
         :param clip_format: The clipboard format for the provided text. It defaults to
             CF_UNICODETEXT. If a string is provided, it will be converted to the
             appropriate clipboard format using a predefined mapping.
-        :type clip_format: int | str
+        :type clip_format: int or str
         :return: None
         :rtype: None
         :raises ValueError: If invalid data or format is provided or an error occurs
@@ -393,7 +394,7 @@ if sys.platform.startswith("win"):
                             safeSetClipboardData(clip_format, handle)
 
 
-    def paste(clip_format: str|int = None, use_mime=True) -> str | dict[str, str|bytes]:
+    def paste(clip_format: Union[str, int] = None, use_mime=True) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -407,6 +408,10 @@ if sys.platform.startswith("win"):
             predefined clipboard formats like CF_UNICODETEXT, or a list/tuple of
             formats for multi-format retrieval. Defaults to CF_UNICODETEXT.
             For compatibility, if a MIME Type is passed, an equivalent MIME Type will be used.
+
+        :param use_mime: If True, the function will attempt to use MIME types for clipboard
+            format negotiation. This is useful for applications that need to work with
+            web content or other environments where MIME types are the standard.
 
         :return: If a single format is provided, returns the data for that format,
             decoded accordingly based on the format type. If multiple formats are
@@ -459,7 +464,7 @@ if sys.platform.startswith("win"):
                 return answer
 
 
-    def available_formats(use_mime=True) -> list[str|int]:
+    def available_formats(use_mime=True) -> List[Union[str, int]]:
         formats = []
         with clipboard(None):
             fmt = 0
@@ -513,8 +518,7 @@ elif sys.platform == "darwin":
 
 
     # macOS implementation.
-    # TODO: For some reason in my installation the 3.9 in python doesn't support the | in typing definitions
-    def paste(clip_format = None):
+    def paste(clip_format: Union[str, list[str], tuple[str]] = None):
         """
         Gets the contents of the clipboard. If there are more than one clipboard format, it returns the
         :param clip_format:
@@ -676,7 +680,7 @@ elif sys.platform.startswith("linux"):
               "   > sudo pacman -S xclip\n"
               )
 
-    def paste(clip_format: str|None = None) -> dict|bytes|str:
+    def paste(clip_format: Optional[str] = None) -> Union[dict, bytes, str]:
         result = {}
         if clip_format:
             clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
