@@ -21,5 +21,7 @@ def output_everything_from_clipboard():
 
 if __name__ == '__main__':
     test_windows_available_formats()
-    # output_everything_from_clipboard()
-    clipin.paste('image/png')
+    output_everything_from_clipboard()
+    bmp = clipin.paste('image/bmp')
+    with open('clipboard_image.bmp', 'wb') as f:
+        f.write(bmp)

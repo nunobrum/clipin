@@ -28,8 +28,9 @@ if sys.platform.startswith("win"):
     else:
         _use_pil = True
         import io
-        from win_dib import convert_dib_to_image, convert_image_to_dib_bytes
-
+        # Use relative import to avoid ModuleNotFoundError when package is imported
+        from .win_dib import convert_dib_to_image, convert_image_to_dib_bytes
+        from .win_dib import parse_dib_to_png as _parse_dib_to_png  # used in tests
 
     msvcrt = ctypes.CDLL('msvcrt')
 
@@ -168,7 +169,7 @@ if sys.platform.startswith("win"):
         ("text/locale", CF_LOCALE),
 
         # Image formats
-        ("image/bmp", CF_BITMAP),
+        ("image/x-win-bmp", CF_BITMAP),  # This is not working for paste operations
         ("image/x-win-dib", CF_DIB),
         ("image/x-win-dibv5", CF_DIBV5),
         ("image/tiff", CF_TIFF),
@@ -479,18 +480,20 @@ if sys.platform.startswith("win"):
                         # Treat the MIME types that are not supported in Windows
                         # image/png, image/jpeg, image/gif, etc.
                         preferred_image_format = clip_format[6:].upper() # exclude 'image/' prefix
-                        clip_format = CF_DIB  # We will try to get DIB format to convert later
+                        cf = CF_DIB  # We will try to get DIB format to convert later
                     else:
-                        clip_format = mime_to_cf(clip_format)
+                        cf = mime_to_cf(clip_format)
+                else:
+                    cf = clip_format
 
-                assert isinstance(clip_format, int), "clip_format must be an int at this point"
-                if clip_format == CF_BITMAP:
+                assert isinstance(cf, int), "clip_format must be an int at this point, it's %s" % type(cf)
+                if cf == CF_BITMAP:
                     continue  # Bitmap format not supported for retrieval. TODO: Investigate later
 
-                handle = safeGetClipboardData(clip_format)
+                handle = safeGetClipboardData(cf)
                 if handle:
                     try:
-                        if clip_format == CF_UNICODETEXT:
+                        if cf == CF_UNICODETEXT:
                             data = c_wchar_p(handle).value
                         else:
                             size = safeGlobalSize(handle)
@@ -500,10 +503,10 @@ if sys.platform.startswith("win"):
                         answer[clip_format] = None
                         continue
                     # Decode text formats
-                    if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                    if cf in TEXT_FORMATS_NEEDING_ENCODING:
                         data = data.decode('utf-8')
 
-                    if (clip_format == CF_DIB or clip_format == CF_DIBV5) and \
+                    if (cf == CF_DIB or cf == CF_DIBV5) and \
                             preferred_image_format is not None:
                         if _use_pil:
                             # Windows DIB format includes a BITMAPINFOHEADER structure at the start
@@ -517,7 +520,6 @@ if sys.platform.startswith("win"):
                             output = io.BytesIO()
                             img.save(output, format=preferred_image_format)
                             data = output.getvalue()
-                            clip_format = 'image/' + preferred_image_format.lower()
                         else:
                             print("PIL library not found. Cannot convert DIB to image format.\n"
                                   "Install Pillow using the command: pip install pillow")
