@@ -8,10 +8,10 @@ from typing import Union, Optional, Dict, List
 class ClipboardError(Exception):
     pass
 
-converted_types_in_copy = (str, int, float, bool)
+types_to_stringify = (str, int, float, bool)
 
 def _stringify_text(text):
-    if not isinstance(text, converted_types_in_copy):
+    if not isinstance(text, types_to_stringify):
         raise ClipboardError(
             'only str, int, float, and bool values can be copied to the clipboard, not %s' % text.__class__.__name__)
     return str(text)
@@ -21,6 +21,15 @@ if sys.platform.startswith("win"):
     from ctypes import c_size_t, sizeof, c_wchar_p, get_errno, c_wchar, windll, string_at
     from ctypes.wintypes import (HGLOBAL, LPVOID, DWORD, LPCSTR, INT, HWND,
                                  HINSTANCE, HMENU, BOOL, UINT, HANDLE, CHAR)
+    try:
+        from PIL import Image
+    except ImportError:
+        _use_pil = False
+    else:
+        _use_pil = True
+        import io
+        from win_dib import convert_dib_to_image, convert_image_to_dib_bytes
+
 
     msvcrt = ctypes.CDLL('msvcrt')
 
@@ -160,8 +169,8 @@ if sys.platform.startswith("win"):
 
         # Image formats
         ("image/bmp", CF_BITMAP),
-        ("image/x-dib", CF_DIB),
-        ("image/vnd.ms-photo", CF_DIBV5),
+        ("image/x-win-dib", CF_DIB),
+        ("image/x-win-dibv5", CF_DIBV5),
         ("image/tiff", CF_TIFF),
         ("image/x-wmf", CF_METAFILEPICT),
         ("image/x-emf", CF_ENHMETAFILE),
@@ -192,6 +201,8 @@ if sys.platform.startswith("win"):
         # ("application/x-private-format", CF_PRIVATEFIRST, CF_PRIVATELAST),
         # ("application/x-gdi-object", CF_GDIOBJFIRST, CF_GDIOBJLAST),
     )
+
+    NATIVE_IMAGES_MIME_TYPES = list(item[0] for item in MIME_CF_MAPPINGS if item[0].startswith('image/'))
 
     # --- Derived Dictionaries ---
     def mime_to_cf(mimep) -> int:
@@ -342,17 +353,11 @@ if sys.platform.startswith("win"):
         # This function is heavily based on
         # http://msdn.com/ms649016#_win32_Copying_Information_to_the_Clipboard
 
-        def _to_cf(cf_or_mime):
-            if isinstance(cf_or_mime, str):
-                return mime_to_cf(cf_or_mime)
-            else:
-                return cf_or_mime
-
         if isinstance(data, dict):
             # Transform all MIME types to CF codes
-            text_dict = {_to_cf(cf): text for cf, text in data.items()}
+            text_dict = {cf: cf_data for cf, cf_data in data.items()}
         else:
-            text_dict = {_to_cf(clip_format): data}
+            text_dict = {clip_format: data}
 
         with window() as hwnd:
             # http://msdn.com/ms649048
@@ -363,32 +368,63 @@ if sys.platform.startswith("win"):
             with clipboard(hwnd):
                 safeEmptyClipboard()
 
-                for clip_format, text in text_dict.items():
-                    if isinstance(text, converted_types_in_copy):
-                        text = _stringify_text(text)  # Converts non-str values to str.
-                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
-                            text = text.encode('utf-8')
+                for clip_format, clip_data in text_dict.items():
+                    # Treat the MIME types that are not supported in Windows
+                    # image/png, image/jpeg, image/gif, etc.
+                    if isinstance(clip_format, str):
+                        if clip_format.startswith('image/') and clip_format not in NATIVE_IMAGES_MIME_TYPES:
+                            if _use_pil is False:
+                                raise ClipboardError(f"PIL library not found. Cannot copy image format {clip_format}.\n"
+                                                     f"Install Pillow using the command: pip install pillow")
+                            clip_data = convert_image_to_dib_bytes(image_data=clip_data, dib_format=CF_DIB)
+                            clip_format = CF_DIB
+                        else:
+                            clip_format = mime_to_cf(clip_format)
+                    elif clip_format in (CF_DIB, CF_DIBV5):
+                        if (clip_data.startswith(b'BM')  # BMP signature
+                            or clip_data.startswith(b'\x89PNG')  # PNG signature
+                            or clip_data.startswith(b'\x49\x49')  # TIFF signature
+                            or clip_data.startswith(b'\x4D\x4D')  # TIFF signature
+                            or clip_data.startswith(b'\xFF\xD8\xFF')):  # JPEG signature
+                            if _use_pil is False:
+                                raise ClipboardError(f"PIL library not found. Cannot copy DIB format {clip_format}.\n"
+                                                 f"Install Pillow using the command: pip install pillow")
+                            clip_data = convert_image_to_dib_bytes(image_data=clip_data, dib_format=clip_format)
+                        else:
+                            # Assert that clip_data is already in DIB format
+                            assert isinstance(clip_data, bytes), "DIB data must be bytes"
+                            # Read header size (first 4 bytes, little endian)
+                            header_size = int.from_bytes(clip_data[0:4], 'little')
+                            if header_size not in (12, 40, 108, 124):
+                                raise ClipboardError("DIB data has invalid header size")
 
-                    if text:
+                    assert isinstance(clip_format, int), "clip_format must be an int at this point"
+
+                    if isinstance(clip_data, types_to_stringify):
+                        clip_data = _stringify_text(clip_data)  # Converts non-str values to str.
+                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                            clip_data = clip_data.encode('utf-8')
+
+                    if clip_data:
                         # http://msdn.com/ms649051
                         # If the hMem parameter identifies a memory object,
                         # the object must have been allocated using the
                         # function with the GMEM_MOVEABLE flag.
-                        if isinstance(text, bytes):  # This passes in an 8 bit format.
-                            count = len(text) + 1
+                        if isinstance(clip_data, bytes):  # This passes in an 8 bit format.
+                            count = len(clip_data) + 1
                             handle = safeGlobalAlloc(GMEM_MOVEABLE,
                                                      count * sizeof(CHAR))
                             locked_handle = safeGlobalLock(handle)
-                            ctypes.memmove(LPCSTR(locked_handle), LPCSTR(text), count * sizeof(CHAR))
+                            ctypes.memmove(LPCSTR(locked_handle), LPCSTR(clip_data), count * sizeof(CHAR))
 
                             safeGlobalUnlock(handle)
                             safeSetClipboardData(clip_format, handle)
                         else:
-                            count = wcslen(text) + 1
+                            count = wcslen(clip_data) + 1
                             handle = safeGlobalAlloc(GMEM_MOVEABLE,
                                                      count * sizeof(c_wchar))
                             locked_handle = safeGlobalLock(handle)
-                            ctypes.memmove(c_wchar_p(locked_handle), c_wchar_p(text), count * sizeof(c_wchar))
+                            ctypes.memmove(c_wchar_p(locked_handle), c_wchar_p(clip_data), count * sizeof(c_wchar))
 
                             safeGlobalUnlock(handle)
                             safeSetClipboardData(clip_format, handle)
@@ -421,10 +457,11 @@ if sys.platform.startswith("win"):
         :rtype: Union[str, dict[str, Union[str, bytes]]]
         """
         answer = {}
+        preferred_image_format = None  # used when converting DIB to image format
         if clip_format is None or clip_format == 0 or (
                 isinstance(clip_format, (list, tuple)) and len(clip_format) == 0):
             # Will retrieve the list of available formats
-            clip_formats = available_formats()
+            clip_formats = available_formats(use_mime=False)
             single_output = False
         elif isinstance(clip_format, (list, tuple)):
             clip_formats = clip_format
@@ -438,20 +475,54 @@ if sys.platform.startswith("win"):
             for clip_format in clip_formats:
                 # Transform MIME types to CF codes
                 if isinstance(clip_format, str):
-                    clip_format = mime_to_cf(clip_format)
-                handle = safeGetClipboardData(clip_format)
-                if not handle:
-                    answer[clip_format] = None
-                else:
-                    if clip_format == CF_UNICODETEXT:
-                        text = c_wchar_p(handle).value
+                    if clip_format.startswith('image/') and clip_format not in NATIVE_IMAGES_MIME_TYPES:
+                        # Treat the MIME types that are not supported in Windows
+                        # image/png, image/jpeg, image/gif, etc.
+                        preferred_image_format = clip_format[6:].upper() # exclude 'image/' prefix
+                        clip_format = CF_DIB  # We will try to get DIB format to convert later
                     else:
-                        size = safeGlobalSize(handle)
-                        text = string_at(safeGlobalLock(handle), size)
-                        safeGlobalUnlock(handle)
-                        if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
-                            text = text.decode('utf-8')
-                    answer[clip_format] = text
+                        clip_format = mime_to_cf(clip_format)
+
+                assert isinstance(clip_format, int), "clip_format must be an int at this point"
+                if clip_format == CF_BITMAP:
+                    continue  # Bitmap format not supported for retrieval. TODO: Investigate later
+
+                handle = safeGetClipboardData(clip_format)
+                if handle:
+                    try:
+                        if clip_format == CF_UNICODETEXT:
+                            data = c_wchar_p(handle).value
+                        else:
+                            size = safeGlobalSize(handle)
+                            data = string_at(safeGlobalLock(handle), size)
+                            safeGlobalUnlock(handle)
+                    except:
+                        answer[clip_format] = None
+                        continue
+                    # Decode text formats
+                    if clip_format in TEXT_FORMATS_NEEDING_ENCODING:
+                        data = data.decode('utf-8')
+
+                    if (clip_format == CF_DIB or clip_format == CF_DIBV5) and \
+                            preferred_image_format is not None:
+                        if _use_pil:
+                            # Windows DIB format includes a BITMAPINFOHEADER structure at the start
+                            # and data is encoded differently.
+                            # If PIL exists, it can be used to parse the data
+                            # and convert it to a PNG or BMP format.
+                            img = convert_dib_to_image(data)
+                            if img is None:
+                                answer[clip_format] = data  # keep original DIB data if conversion fails
+                                continue
+                            output = io.BytesIO()
+                            img.save(output, format=preferred_image_format)
+                            data = output.getvalue()
+                            clip_format = 'image/' + preferred_image_format.lower()
+                        else:
+                            print("PIL library not found. Cannot convert DIB to image format.\n"
+                                  "Install Pillow using the command: pip install pillow")
+                        preferred_image_format = None # only convert or print warning once
+                    answer[clip_format] = data
 
         # now will see if only one is returned or the complete list
         if single_output:
@@ -623,7 +694,7 @@ elif sys.platform == "darwin":
                 cf_type = NF_MIME_MAPPINGS.get(paste_type, paste_type)
                 if cf_type.startswith("NSPasteboardType"):
                     cf_type = getattr(AppKit, cf_type)
-                if isinstance(data, converted_types_in_copy):
+                if isinstance(data, types_to_stringify):
                     data = _stringify_text(data)  # Converts non-str values to str.
                 if cf_type in TEXT_FORMATS_NEEDING_ENCODING and isinstance(data, str):
                     coding = TEXT_FORMATS_NEEDING_ENCODING[cf_type]
@@ -714,7 +785,7 @@ elif sys.platform.startswith("linux"):
     def copy(data, clip_format: str = None):
         if clip_format is None:
             # Will try to determine a type
-            if isinstance(data, converted_types_in_copy):
+            if isinstance(data, types_to_stringify):
                 data = _stringify_text(data)  # Converts non-str values to str.
                 clip_format = 'text/plain'
             elif isinstance(data, dict):
