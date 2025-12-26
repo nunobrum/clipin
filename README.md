@@ -71,6 +71,30 @@ clipin is designed to be lightweight, with minimal dependencies. However, for en
 
 Without these libraries, clipin will still function for basic text copy and paste operations.
 
+## 📄 License
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgements and Credits
+This project was inspired on [pyperclip](https://github.com/asweigart/pyperclip), a library that almost everyone used and loved, but unfortunately was stalled.
+Firstly the pull-requests where not being attended and support for the new wheel package format was not being added.
+The initial goal of this project was to fork pyperclip and continue its development, but the scope quickly expanded.
+
+The development of this library followed 4 basic principles:
+1. Keep it simple to use. No object-oriented API, just simple functions to copy and paste.
+2. Maintain cross-platform compatibility.
+3. Support multiple clipboard formats.
+4. Minimal dependencies. If third-party libraries are needed, they should be optional and only for enhanced functionality.
+
+This project development was aided by ChatGPT-4 and GitHub Copilot. 
+The long discussions on possibilities and implementation options were very helpful to clarify the design decisions.
+Also the implementation of DIB handling on Windows and NSPasteboard interactions on macOS were greatly simplified by the suggestions of these AI tools.
+Special thanks to the open-source community for creating and maintaining tools like pyperclip, Pillow, xclip, and pyobjc, which made this project possible.
+
+Finally thanks to my wife and kids for their patience while I was working on this project.
+
+I hope you find clipin useful! 😊
+Stay well and happy coding! 🚀
+
 ## ⚙️ Notes
 
 [^1]: Requires `xclip` on Linux and `pyobjc` on macOS. If these are not present, clipin will support only basic text copy and paste.
@@ -98,26 +122,3 @@ Without these libraries, clipin will still function for basic text copy and past
 
     See: https://docs.microsoft.com/en-us/windows/win32/dataxchg/standard-clipboard-formats
 
-## 📄 License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgements and Credits
-This project was inspired on [pyperclip](https://github.com/asweigart/pyperclip), a library that almost everyone used and loved, but unfortunately was stalled.
-Firstly the pull-requests where not being attended and support for the new wheel package format was not being added.
-The initial goal of this project was to fork pyperclip and continue its development, but the scope quickly expanded.
-
-The development of this library followed 4 basic principles:
-1. Keep it simple to use. No object-oriented API, just simple functions to copy and paste.
-2. Maintain cross-platform compatibility.
-3. Support multiple clipboard formats.
-4. Minimal dependencies. If third-party libraries are needed, they should be optional and only for enhanced functionality.
-
-This project development was aided by ChatGPT-4 and GitHub Copilot. 
-The long discussions on possibilities and implementation options were very helpful to clarify the design decisions.
-Also the implementation of DIB handling on Windows and NSPasteboard interactions on macOS were greatly simplified by the suggestions of these AI tools.
-Special thanks to the open-source community for creating and maintaining tools like pyperclip, Pillow, xclip, and pyobjc, which made this project possible.
-
-Finally thanks to my wife and kids for their patience while I was working on this project.
-
-I hope you find clipin useful! 😊
-Stay well and happy coding! 🚀
