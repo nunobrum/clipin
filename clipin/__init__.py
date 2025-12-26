@@ -327,7 +327,7 @@ if sys.platform.startswith("win"):
             safeCloseClipboard()
 
 
-    def copy(data: Union[dict, str, bytes], clip_format: Union[str, int] = CF_UNICODETEXT):
+    def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = CF_UNICODETEXT):
         """
         Copies the provided data to the Windows clipboard in the specified clipboard format.
         It makes use of Windows API functions to manage the clipboard.
@@ -538,6 +538,7 @@ if sys.platform.startswith("win"):
 
 
     def available_formats(use_mime=True) -> List[Union[str, int]]:
+        """ Returns the list of available clipboard formats. """
         formats = []
         with clipboard(None):
             fmt = 0
@@ -550,6 +551,16 @@ if sys.platform.startswith("win"):
                 else:
                     formats.append(fmt)
             return formats
+
+
+    def capabilities() -> dict:
+        """ Returns the capabilities of the clipboard module. """
+        return {
+            'text': True,
+            'images': _use_pil,
+            'multiple_formats_copy': True,
+            'multiple_formats_paste': True,
+        }
 
 
 elif sys.platform == "darwin":
@@ -571,6 +582,8 @@ elif sys.platform == "darwin":
             'image/png': 'NSPasteboardTypePNG',
             'image/tiff': 'NSPasteboardTypeTIFF',
         }
+        MIME_NF_MAPPINGS = {getattr(AppKit, cf_type) if cf_type.startswith("NSPasteboardType") else cf_type: mime for mime, cf_type in NF_MIME_MAPPINGS.items()}
+
         APPLE_MIME_MAPPINGS = {
             'public.utf8-plain-text': 'text/plain',
         }
@@ -591,7 +604,7 @@ elif sys.platform == "darwin":
 
 
     # macOS implementation.
-    def paste(clip_format: Union[str, list[str], tuple[str]] = None):
+    def paste(clip_format: Union[str, list[str], tuple[str]] = None) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
         """
         Gets the contents of the clipboard. If there are more than one clipboard format, it returns the
         :param clip_format:
@@ -621,7 +634,7 @@ elif sys.platform == "darwin":
                     if pb_type in TEXT_FORMATS_NEEDING_ENCODING:
                         coding = TEXT_FORMATS_NEEDING_ENCODING[pb_type]
                         data = data.decode(coding)
-                    mime_type = APPLE_MIME_MAPPINGS.get(pb_type, pb_type)
+                    mime_type = MIME_NF_MAPPINGS.get(pb_type, pb_type)
                     if clip_formats == "*/*" or mime_type in clip_formats or pb_type in clip_formats:
                         result[mime_type] = data
 
@@ -639,7 +652,7 @@ elif sys.platform == "darwin":
         return result
 
 
-    def copy(data, clip_format: str = None):
+    def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = None):
         """
         Copies the provided data to the MAC OSX clipboard in the specified clipboard format.
         If PyObjC library is installed, it allows the user to set one or more clipboard formats.
@@ -733,8 +746,18 @@ elif sys.platform == "darwin":
 
 
     def available_formats() -> list[str]:
+        """ Returns the list of available clipboard formats. """
         clipboard_contents:dict = paste(None)
         return list(clipboard_contents.keys())
+
+    def capabilities() -> dict:
+        """ Returns the capabilities of the clipboard module. """
+        return {
+            'text': True,
+            'images': _use_appkit,
+            'multiple_formats_copy': _use_appkit,
+            'multiple_formats_paste': _use_appkit,
+        }
 
 
 elif sys.platform.startswith("linux"):
@@ -753,7 +776,16 @@ elif sys.platform.startswith("linux"):
               "   > sudo pacman -S xclip\n"
               )
 
-    def paste(clip_format: Optional[str] = None) -> Union[dict, bytes, str]:
+    def paste(clip_format: Optional[str] = None) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
+        """
+        Gets the contents of the Linux clipboard. If there are more than one clipboard format, it returns the
+        contents as a dictionary where the keys are the clipboard formats and the values are the corresponding data.
+        :param clip_format: The clipboard format to retrieve. If None, retrieves all available formats.
+        :type clip_format: str or None
+        :return: The clipboard contents in the specified format or all formats if None.
+        :rtype: str, bytes, or dict
+        :raises ClipboardError: If the specified format is not available in the clipboard.
+        """
         result = {}
         if clip_format:
             clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
@@ -784,7 +816,23 @@ elif sys.platform.startswith("linux"):
                 raise ClipboardError(f"{clip_format} not in clipboard. Available formats are  {result.keys()}")
 
 
-    def copy(data, clip_format: str = None):
+    def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = None):
+        """
+        Copies the provided data to the Linux clipboard in the specified clipboard format.
+        It makes use of the xclip command-line tool to interact with the clipboard.
+        If xclip is not found, it falls back to using tkinter for text data.
+        :param data: The text or dictionary to be copied to the clipboard. If a
+            dictionary is provided, each key-value pair represents a clipboard format
+            and its corresponding text content.
+        :type data: str or dict
+        :param clip_format: The clipboard format for the provided text. It defaults to
+            None. If None, the function will attempt to determine the format based on
+            the data type.
+        :type clip_format: str or None
+        :return: None
+        :rtype: None
+        :raises ClipboardError: If an error occurs during the clipboard operation.
+        """
         if clip_format is None:
             # Will try to determine a type
             if isinstance(data, types_to_stringify):
@@ -833,6 +881,7 @@ elif sys.platform.startswith("linux"):
             raise ClipboardError(f"Failed to set clipboard data: {e}")
 
     def available_formats() -> list[str]:
+        """ Returns the list of available clipboard formats. """
         try:
             formats = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-out'], text=True)
             formats = formats.splitlines()
@@ -841,3 +890,18 @@ elif sys.platform.startswith("linux"):
         except Exception:
             formats = []
         return formats
+
+    def capabilities() -> dict:
+        """ Returns the capabilities of the clipboard module. """
+        try:
+            subprocess.check_output(['xclip', '-version'], text=True)
+        except FileNotFoundError:
+            images = False
+        else:
+            images = True
+        return {
+            'text': True,
+            'images': images,
+            'multiple_formats_copy': False,
+            'multiple_formats_paste': True,
+        }

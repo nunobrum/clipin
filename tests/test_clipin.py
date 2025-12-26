@@ -1,4 +1,6 @@
 import sys
+import os
+sys.path.append(os.path.abspath('..'))
 import unittest
 import clipin
 from clipin import ClipboardError
