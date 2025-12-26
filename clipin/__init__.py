@@ -586,7 +586,7 @@ elif sys.platform == "darwin":
     def display_warning(clip_format):
         if not _use_appkit and clip_format != 'text/plain':
             print("MIME clipboard support on macOS requires additional libraries.\n" \
-                  "Install PyObjC + Cocoa using the commnand: pip install pyobjc\n"
+                  "Install PyObjC + Cocoa using the command: pip install pyobjc\n"
                   "use 'text/plain' as clip_format to avoid this message.")
 
 
