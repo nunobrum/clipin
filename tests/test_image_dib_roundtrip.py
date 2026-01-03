@@ -22,6 +22,7 @@ class TestImageDIBRoundtrip(unittest.TestCase):
             'test_image.tiff',
         ]
 
+    @unittest.skipIf(not sys.platform.startswith("win"), "Skipping binary format test if not on Windows")
     def test_dib_binaries_convert_to_png(self):
         # existing raw DIB sample binaries
         for name in ('clipboard_data_image_x-win-dib.bin', 'clipboard_data_image_x-win-dibv5.bin'):
@@ -30,6 +31,7 @@ class TestImageDIBRoundtrip(unittest.TestCase):
             out = clipin._parse_dib_to_png(raw, format='PNG')
             self.assertTrue(is_png(out), f"DIB binary {name} did not convert to PNG")
 
+    @unittest.skipIf(not sys.platform.startswith("win"), "Skipping binary format test if not on Windows")
     def test_image_to_dib_and_back(self):
         # for each sample image, convert to DIB and back to PNG
         for name in self.samples:
@@ -42,6 +44,7 @@ class TestImageDIBRoundtrip(unittest.TestCase):
             out = clipin._parse_dib_to_png(dib, format='PNG')
             self.assertTrue(is_png(out), f"Roundtrip for {name} did not produce PNG")
 
+    @unittest.skipIf(not sys.platform.startswith("win"), "Skipping binary format test if not on Windows")
     def test_dibv5_roundtrip(self):
         # test CF_DIBV5 conversion specifically
         for name in ('pattern.png', 'test_image.png'):
