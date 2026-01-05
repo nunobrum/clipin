@@ -18,6 +18,7 @@ def _stringify_text(text):
     return str(text)
 
 
+# region Windows Clipboard Implementation
 if sys.platform.startswith("win"):
     from ctypes import c_size_t, sizeof, c_wchar_p, get_errno, c_wchar, windll, string_at
     from ctypes.wintypes import (HGLOBAL, LPVOID, DWORD, LPCSTR, INT, HWND,
@@ -327,7 +328,6 @@ if sys.platform.startswith("win"):
         finally:
             safeCloseClipboard()
 
-
     def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = CF_UNICODETEXT):
         """
         Copies the provided data to the Windows clipboard in the specified clipboard format.
@@ -431,8 +431,7 @@ if sys.platform.startswith("win"):
                             safeGlobalUnlock(handle)
                             safeSetClipboardData(clip_format, handle)
 
-
-    def paste(clip_format: Union[str, int] = None, use_mime=True) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
+    def paste(clip_format: Union[str, int, None] = None, use_mime=True) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
         """
         Retrieve data from the clipboard for a specific format or multiple formats.
 
@@ -537,9 +536,8 @@ if sys.platform.startswith("win"):
             else:
                 return answer
 
-
     def available_formats(use_mime=True) -> List[Union[str, int]]:
-        """ Returns the list of available clipboard formats. """
+        """ Returns the list of available clipboard formats of the present content of the clipboard. """
         formats = []
         with clipboard(None):
             fmt = 0
@@ -553,17 +551,17 @@ if sys.platform.startswith("win"):
                     formats.append(fmt)
             return formats
 
-
     def capabilities() -> dict:
         """ Returns the capabilities of the clipboard module. """
         return {
-            'text': True,
-            'images': _use_pil,
+            'textplain': True,
+            'mime': _use_pil,
             'multiple_formats_copy': True,
             'multiple_formats_paste': True,
         }
+# endregion Windows Clipboard Implementation
 
-
+# region MacOS Clipboard Implementation
 elif sys.platform == "darwin":
     import logging
 
@@ -596,16 +594,14 @@ elif sys.platform == "darwin":
 
         }
 
-
     def display_warning(clip_format):
         if not _use_appkit and clip_format != 'text/plain':
-            print("MIME clipboard support on macOS requires additional libraries.\n" \
+            print("MIME clipboard support on macOS requires additional libraries.\n" 
                   "Install PyObjC + Cocoa using the command: pip install pyobjc\n"
-                  "use 'text/plain' as clip_format to avoid this message.")
-
+                  "Use 'text/plain' as clip_format to avoid this message.")
 
     # macOS implementation.
-    def paste(clip_format: Union[str, list[str], tuple[str]] = None) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
+    def paste(clip_format: Union[str, list[str], tuple[str], None] = None) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
         """
         Gets the contents of the clipboard. If there are more than one clipboard format, it returns the
         :param clip_format:
@@ -613,8 +609,8 @@ elif sys.platform == "darwin":
         """
         result = {}
         if _use_appkit:
-            if clip_format is None or clip_format == 0 or clip_format == '' or (
-                isinstance(clip_format, (list, tuple)) and len(clip_format) == 0):
+            if clip_format is None or clip_format == 0 or (
+                isinstance(clip_format, (str, list, tuple)) and len(clip_format) == 0):
                 # Will retrieve the list of available formats
                 clip_formats = "*/*"
                 single_output = False
@@ -651,7 +647,6 @@ elif sys.platform == "darwin":
             result = result[clip_format]
 
         return result
-
 
     def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = None):
         """
@@ -703,11 +698,12 @@ elif sys.platform == "darwin":
 
                 data = {clip_format: data}
 
-
             copies_done = []
             for paste_type, data in data.items():
                 # Need to convert to apple's recognized types
-                cf_type = NF_MIME_MAPPINGS.get(paste_type, paste_type)
+                cf_type = NF_MIME_MAPPINGS.get(paste_type, None)
+                if cf_type is None:
+                    raise ClipboardError(f"MIME type not supported : '{paste_type}'")
                 if cf_type.startswith("NSPasteboardType"):
                     cf_type = getattr(AppKit, cf_type)
                 if isinstance(data, types_to_stringify):
@@ -730,8 +726,9 @@ elif sys.platform == "darwin":
 
         else:
             display_warning(clip_format)
-
-            if clip_format is None or len(clip_format)==0:
+            
+            if clip_format is None or clip_format == 0 or (
+                    isinstance(clip_format, (str, list, tuple)) and len(clip_format) == 0):                
                 clip_format = 'text/plain'
     
             if clip_format == 'text/plain':
@@ -742,51 +739,55 @@ elif sys.platform == "darwin":
 
                 p = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
                 p.communicate(input=data)
-            else:
+            else:                
                 raise ClipboardError(f"MIME type not supported : '{clip_format}'")
 
-
     def available_formats() -> list[str]:
-        """ Returns the list of available clipboard formats. """
-        clipboard_contents:dict = paste(None)
+        """ Returns the list of available clipboard formats of the present content of the clipboard. """
+        clipboard_contents: dict = paste(None)
         return list(clipboard_contents.keys())
 
     def capabilities() -> dict:
         """ Returns the capabilities of the clipboard module. """
         return {
-            'text': True,
-            'images': _use_appkit,
+            'textplain': True,
+            'mime': _use_appkit,
             'multiple_formats_copy': _use_appkit,
             'multiple_formats_paste': _use_appkit,
         }
+# endregion MacOS Clipboard Implementation
 
-
+# region Linux Clipboard Implementation
 elif sys.platform.startswith("linux"):
     # Linux implementation
     if 'DISPLAY' in os.environ and len(os.environ['DISPLAY']) > 0:
+        _have_display = True
+        _have_clipboard = True
         try:
             import tkinter as tk
-            _use_tkinter = True
+            _have_tkinter = True
         except ImportError:
-            _use_tkinter = False
+            _have_tkinter = False
         try:
             subprocess.check_output(['xclip', '-version'], text=True)
-            _use_xclip = True
+            _have_xclip = True
         except FileNotFoundError:
-            _use_xclip = False
-        if not _use_xclip and not _use_tkinter:
+            _have_xclip = False
+        if not _have_xclip and not _have_tkinter:
             print("Warning: Neither xclip nor tkinter found. Clipboard operations will not work.\n"
                   "Please install xclip or python-tk to enable clipboard functionality.")
             _have_clipboard = False
     else:
         print("Warning: This system has no display. Clipboard operations will not work.")
+        _have_display = False
         _have_clipboard = False
-        _use_tkinter = False
-        _use_xclip = False
+        _have_tkinter = False
+        _have_xclip = False
 
     def is_text_format(clip_format: str) -> bool:
         return clip_format is None or clip_format.startswith('text')
 
+    # not used now, but may be useful later
     def print_xclip_missing_warning():
         print("xclip not found. Please install xclip to use advanced clipboard features.\n"
               "To install xclip in Debian/Ubuntu-based distributions :\n"
@@ -797,6 +798,15 @@ elif sys.platform.startswith("linux"):
               "For Arch-based systems:\n"
               "   > sudo pacman -S xclip\n"
               )
+        
+    def display_warning(clip_format):
+        if not _have_display:
+            print("No clipboard available on this system. Make sure a display is available.")
+        elif not _have_clipboard:
+            print("No clipboard available on this system. Make sure to install xclip or tkinter.")
+        elif not _have_xclip and clip_format != 'text/plain':
+            print("MIME clipboard support on Linux requires xclip.\n" 
+                  "Use 'text/plain' as clip_format to avoid this message.")
 
     def paste(clip_format: Optional[str] = None) -> Union[str, bytes, Dict[str, Union[str, bytes]]]:
         """
@@ -810,7 +820,8 @@ elif sys.platform.startswith("linux"):
         """
         result = {}
         if not _have_clipboard:
-            raise ClipboardError("No clipboard available on this system.")
+            display_warning("")
+            return result
         
         if clip_format:
             clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
@@ -818,14 +829,14 @@ elif sys.platform.startswith("linux"):
             clip_formats = available_formats()
 
         for cf in clip_formats:
-            if _use_xclip:
+            if _have_xclip:
                 try:
                     result[cf] = subprocess.check_output(
                         ['xclip', '-selection', 'clipboard', '-t', cf, '-out'], text=is_text_format(cf))
                 except Exception as e:
                     raise ClipboardError(f"Failed to get clipboard data using xclip: {e}")
-            elif _use_tkinter and is_text_format(cf):
-                # TODO check validity of this
+            elif _have_tkinter and is_text_format(cf):
+                # TODO check validity of this, maybe support for text/html is missing
                 try:
                     import tkinter as tk
                     r = tk.Tk()
@@ -833,6 +844,9 @@ elif sys.platform.startswith("linux"):
                     result[cf] = r.clipboard_get()
                 except Exception as e:
                     raise ClipboardError(f"Failed to get clipboard data using tkinter: {e}")
+            else:
+                display_warning(cf)
+                # No clipboard available for that format
 
         if not clip_format:
             return result
@@ -860,6 +874,7 @@ elif sys.platform.startswith("linux"):
         :raises ClipboardError: If an error occurs during the clipboard operation.
         """
         if not _have_clipboard:
+            display_warning("")
             raise ClipboardError("No clipboard available on this system.")
                 
         if clip_format is None:
@@ -895,13 +910,13 @@ elif sys.platform.startswith("linux"):
         if is_text_format(clip_format):
             data = data.encode('utf-8') if isinstance(data, str) else data
         
-        if _use_xclip:
+        if _have_xclip:
             try:
                 p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', clip_format], stdin=subprocess.PIPE)
                 p.communicate(input=data)
             except Exception as e:
                 raise ClipboardError(f"Failed to set clipboard data using xclip: {e}")
-        elif _use_tkinter:
+        elif _have_tkinter:
             if is_text_format(clip_format):
                 try:
                     import tkinter as tk
@@ -913,16 +928,17 @@ elif sys.platform.startswith("linux"):
                 except Exception as e:
                     raise ClipboardError(f"Failed to set clipboard data using tkinter: {e}")
             else:
+                display_warning(clip_format)
                 raise ClipboardError(f"tkinter clipboard only supports text formats, not '{clip_format}'")
 
     def available_formats() -> list[str]:
-        """ Returns the list of available clipboard formats. """
+        """ Returns the list of available clipboard formats of the present content of the clipboard. """
         if not _have_clipboard:
             formats = []
-        elif _use_xclip:
+        elif _have_xclip:
             formats = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-out'], text=True)
             formats = formats.splitlines()
-        elif _use_tkinter:
+        elif _have_tkinter:
             formats = ['text/plain']
         else:
             formats = []
@@ -931,9 +947,11 @@ elif sys.platform.startswith("linux"):
     def capabilities() -> dict:
         """ Returns the capabilities of the clipboard module. """
         return {
-            'text': _have_clipboard,
-            'images': _have_clipboard and _use_xclip,
+            'textplain': _have_clipboard,
+            'mime': _have_clipboard and _have_xclip,
             'multiple_formats_copy': False,
-            'multiple_formats_paste': True,
+            'multiple_formats_paste': _have_clipboard and _have_xclip
         }
-    # End of Linux implementation
+# endregion Linux Clipboard Implementation
+else:
+    raise ClipboardError(f"Clipboard operations not supported on this platform: {sys.platform}")

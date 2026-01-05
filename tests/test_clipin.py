@@ -27,24 +27,35 @@ else:
 
 class TestClipin(unittest.TestCase):
 
-    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
+    @unittest.skipIf(not clipin.capabilities()["textplain"], "Skipping test if clipboard is not available")
     def test_text_plain_roundtrip(self):
         text = "Hello from clipin!"
         clipin.copy(text)
         data = clipin.paste('text/plain')
         self.assertIn("Hello", data)
 
+    @unittest.skipIf(not clipin.capabilities()["mime"], "Skipping test if clipboard is not available")
+    def test_text_html_roundtrip(self):
+        text = b"<b>Hello from clipin!</b>"
+        clipin.copy(text, 'text/html')
+        data = clipin.paste('text/html')
+        self.assertIn(b"Hello", data)
+        
+    def test_capabilities_returns_dict(self):
+        caps = clipin.capabilities()
+        self.assertIsInstance(caps, dict)
+        print("Capabilities are : ", caps)        
+
     def test_available_formats_returns_list(self):
         formats = clipin.available_formats()
         self.assertIsInstance(formats, list)
         print("Available Formats are : ", formats)
 
-    @unittest.skipIf(not sys.platform.startswith("win"), "Skipping binary format test if not on Windows")
     def test_set_invalid_format(self):
         with self.assertRaises(ClipboardError):
             clipin.copy(b'unsupported data', 'application/unknown')
 
-    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
+    @unittest.skipIf(not clipin.capabilities()["textplain"], "Skipping test if clipboard is not available")
     def test_get_returns_dict(self):
         clipin.copy("Sample Text")
         result = clipin.paste()
@@ -56,10 +67,9 @@ class TestClipin(unittest.TestCase):
         result = clipin.paste(0)
         self.assertIsInstance(result, dict)
 
-
         print("Clipboard Contents:\n", result)
 
-    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
+    @unittest.skipIf(not clipin.capabilities()["mime"], "Skipping image roundtrip test if image support is not available")
     def test_image_roundtrip(self):
         import os
         image_path = os.path.join(os.path.dirname(__file__), 'test_image.png')
