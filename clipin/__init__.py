@@ -157,7 +157,7 @@ if sys.platform.startswith("win"):
         CF_TEXT: "TEXT",
         CF_TIFF: "TIFF",
         CF_UNICODETEXT: "UNICODE TEXT",
-        CF_WAVE: "WAVE",
+        CF_WAVE: "WAVE"
     }
     TEXT_FORMATS_NEEDING_ENCODING = (CF_TEXT, CF_DSPTEXT)
 
@@ -590,8 +590,8 @@ elif sys.platform == "darwin":
         TEXT_FORMATS_NEEDING_ENCODING = {
             'public.utf8-plain-text': 'utf-8',
             'NSStringPboardType': 'utf-8',
-            'public.utf16-external-plain-text': 'utf-16'
-
+            'public.utf16-external-plain-text': 'utf-16',
+            'public.html': 'utf-8',
         }
 
     def display_warning(clip_format):
@@ -769,7 +769,7 @@ elif sys.platform.startswith("linux"):
         except ImportError:
             _have_tkinter = False
         try:
-            subprocess.check_output(['xclip', '-version'], text=True)
+            subprocess.run(['xclip', '-version'], capture_output=True)
             _have_xclip = True
         except FileNotFoundError:
             _have_xclip = False
@@ -785,7 +785,34 @@ elif sys.platform.startswith("linux"):
         _have_xclip = False
 
     def is_text_format(clip_format: str) -> bool:
-        return clip_format is None or clip_format.startswith('text')
+        if not _have_clipboard:
+            return False
+        if clip_format is None:
+            return True
+        if _have_xclip:
+            return clip_format in ['text/plain', 'text/html']
+        elif _have_tkinter:
+            return clip_format == 'text/html'
+        else:
+            return False
+    
+    def is_valid_format(clip_format: str) -> bool:
+        if not _have_clipboard:
+            return False
+        if clip_format is None:
+            return False  # don't call me with 'None'
+        if _have_xclip:
+            if clip_format in ['text/plain', 'text/html', 'image/png', 'image/jpeg', 'image/gif']:
+                return True
+            else:
+                return False
+        elif _have_tkinter:
+            if is_text_format(clip_format):
+                return True
+            else:
+                return False
+        else:
+            return False
 
     # not used now, but may be useful later
     def print_xclip_missing_warning():
@@ -911,6 +938,9 @@ elif sys.platform.startswith("linux"):
             data = data.encode('utf-8') if isinstance(data, str) else data
         
         if _have_xclip:
+            if not is_valid_format(clip_format):
+                display_warning(clip_format)
+                raise ClipboardError(f"xclip does not support clipboard format '{clip_format}'")
             try:
                 p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', clip_format], stdin=subprocess.PIPE)
                 p.communicate(input=data)

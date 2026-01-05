@@ -36,11 +36,11 @@ class TestClipin(unittest.TestCase):
 
     @unittest.skipIf(not clipin.capabilities()["mime"], "Skipping test if clipboard is not available")
     def test_text_html_roundtrip(self):
-        text = b"<b>Hello from clipin!</b>"
+        text = "<b>Hello from clipin!</b>"  # The native formats differ a lot. The goal is to be able to store, and to be able to read the native format. Cannot test all of that.
         clipin.copy(text, 'text/html')
         data = clipin.paste('text/html')
-        self.assertIn(b"Hello", data)
-        
+        self.assertIn("Hello from clipin!", data)
+
     def test_capabilities_returns_dict(self):
         caps = clipin.capabilities()
         self.assertIsInstance(caps, dict)
