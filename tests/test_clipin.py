@@ -27,6 +27,7 @@ else:
 
 class TestClipin(unittest.TestCase):
 
+    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
     def test_text_plain_roundtrip(self):
         text = "Hello from clipin!"
         clipin.copy(text)
@@ -43,6 +44,7 @@ class TestClipin(unittest.TestCase):
         with self.assertRaises(ClipboardError):
             clipin.copy(b'unsupported data', 'application/unknown')
 
+    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
     def test_get_returns_dict(self):
         clipin.copy("Sample Text")
         result = clipin.paste()
@@ -57,6 +59,7 @@ class TestClipin(unittest.TestCase):
 
         print("Clipboard Contents:\n", result)
 
+    @unittest.skipIf(len(clipin.available_formats()) == 0, "Skipping test if clipboard is not available")
     def test_image_roundtrip(self):
         import os
         image_path = os.path.join(os.path.dirname(__file__), 'test_image.png')

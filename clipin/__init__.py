@@ -1,4 +1,5 @@
 import sys
+import os
 import subprocess
 import ctypes
 import time
@@ -762,6 +763,27 @@ elif sys.platform == "darwin":
 
 elif sys.platform.startswith("linux"):
     # Linux implementation
+    if 'DISPLAY' in os.environ and len(os.environ['DISPLAY']) > 0:
+        try:
+            import tkinter as tk
+            _use_tkinter = True
+        except ImportError:
+            _use_tkinter = False
+        try:
+            subprocess.check_output(['xclip', '-version'], text=True)
+            _use_xclip = True
+        except FileNotFoundError:
+            _use_xclip = False
+        if not _use_xclip and not _use_tkinter:
+            print("Warning: Neither xclip nor tkinter found. Clipboard operations will not work.\n"
+                  "Please install xclip or python-tk to enable clipboard functionality.")
+            _have_clipboard = False
+    else:
+        print("Warning: This system has no display. Clipboard operations will not work.")
+        _have_clipboard = False
+        _use_tkinter = False
+        _use_xclip = False
+
     def is_text_format(clip_format: str) -> bool:
         return clip_format is None or clip_format.startswith('text')
 
@@ -784,28 +806,33 @@ elif sys.platform.startswith("linux"):
         :type clip_format: str or None
         :return: The clipboard contents in the specified format or all formats if None.
         :rtype: str, bytes, or dict
-        :raises ClipboardError: If the specified format is not available in the clipboard.
+        :raises ClipboardError: If the specified format is not available in the clipboard or there is no clipboard.
         """
         result = {}
+        if not _have_clipboard:
+            raise ClipboardError("No clipboard available on this system.")
+        
         if clip_format:
             clip_formats = clip_format if isinstance(clip_format, (set, list, tuple)) else (clip_format, )
         else:
             clip_formats = available_formats()
 
         for cf in clip_formats:
-            try:
-                result[cf] = subprocess.check_output(
-                    ['xclip', '-selection', 'clipboard', '-t', cf, '-out'], text=is_text_format(cf))
-
-            except FileNotFoundError:
-                print_xclip_missing_warning()
-                if 'text/html' in clip_format:
+            if _use_xclip:
+                try:
+                    result[cf] = subprocess.check_output(
+                        ['xclip', '-selection', 'clipboard', '-t', cf, '-out'], text=is_text_format(cf))
+                except Exception as e:
+                    raise ClipboardError(f"Failed to get clipboard data using xclip: {e}")
+            elif _use_tkinter and is_text_format(cf):
+                # TODO check validity of this
+                try:
                     import tkinter as tk
                     r = tk.Tk()
                     r.withdraw()  # Hide the main window
-                    return {'text/html' : r.clipboard_get()}
-            except Exception:
-                pass
+                    result[cf] = r.clipboard_get()
+                except Exception as e:
+                    raise ClipboardError(f"Failed to get clipboard data using tkinter: {e}")
 
         if not clip_format:
             return result
@@ -814,7 +841,6 @@ elif sys.platform.startswith("linux"):
                 return result[clip_format]
             else:
                 raise ClipboardError(f"{clip_format} not in clipboard. Available formats are  {result.keys()}")
-
 
     def copy(data: Union[dict, str, bytes], clip_format: Union[str, int, None] = None):
         """
@@ -833,6 +859,9 @@ elif sys.platform.startswith("linux"):
         :rtype: None
         :raises ClipboardError: If an error occurs during the clipboard operation.
         """
+        if not _have_clipboard:
+            raise ClipboardError("No clipboard available on this system.")
+                
         if clip_format is None:
             # Will try to determine a type
             if isinstance(data, types_to_stringify):
@@ -840,12 +869,12 @@ elif sys.platform.startswith("linux"):
                 clip_format = 'text/plain'
             elif isinstance(data, dict):
                 if len(data) == 0:
-                    raise ClipboardError(f"If dict is passed, it should contain at least one element.")
+                    raise ClipboardError("If dict is passed, it should contain at least one element.")
                 else:
-                    print_warning =  len(data) > 1
+                    print_warning = len(data) > 1
                     clip_format, data = next(iter(data.items()))
                     if print_warning:
-                        print(f"Sorry! Multiple formats not supported in Linux.")
+                        print("Sorry! Multiple formats not supported in Linux.")
             else:
                 try:
                     data.decode('utf-8')  # if it decodes, it is text
@@ -865,43 +894,46 @@ elif sys.platform.startswith("linux"):
 
         if is_text_format(clip_format):
             data = data.encode('utf-8') if isinstance(data, str) else data
-        try:
-            p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', clip_format], stdin=subprocess.PIPE)
-            p.communicate(input=data)
-        except FileNotFoundError:
-            print_xclip_missing_warning()
+        
+        if _use_xclip:
+            try:
+                p = subprocess.Popen(['xclip', '-selection', 'clipboard', '-t', clip_format], stdin=subprocess.PIPE)
+                p.communicate(input=data)
+            except Exception as e:
+                raise ClipboardError(f"Failed to set clipboard data using xclip: {e}")
+        elif _use_tkinter:
             if is_text_format(clip_format):
-                import tkinter as tk
-                r = tk.Tk()
-                r.withdraw()  # Hide the main window
-                r.clipboard_clear()
-                r.clipboard_append(data.decode('utf-8'))
-                r.update()  # Keep data even after script exits
-        except Exception as e:
-            raise ClipboardError(f"Failed to set clipboard data: {e}")
+                try:
+                    import tkinter as tk
+                    r = tk.Tk()
+                    r.withdraw()  # Hide the main window
+                    r.clipboard_clear()
+                    r.clipboard_append(data.decode('utf-8'))
+                    r.update()  # Keep data even after script exits
+                except Exception as e:
+                    raise ClipboardError(f"Failed to set clipboard data using tkinter: {e}")
+            else:
+                raise ClipboardError(f"tkinter clipboard only supports text formats, not '{clip_format}'")
 
     def available_formats() -> list[str]:
         """ Returns the list of available clipboard formats. """
-        try:
+        if not _have_clipboard:
+            formats = []
+        elif _use_xclip:
             formats = subprocess.check_output(['xclip', '-selection', 'clipboard', '-t', 'TARGETS', '-out'], text=True)
             formats = formats.splitlines()
-        except FileNotFoundError:
+        elif _use_tkinter:
             formats = ['text/plain']
-        except Exception:
+        else:
             formats = []
         return formats
 
     def capabilities() -> dict:
         """ Returns the capabilities of the clipboard module. """
-        try:
-            subprocess.check_output(['xclip', '-version'], text=True)
-        except FileNotFoundError:
-            images = False
-        else:
-            images = True
         return {
-            'text': True,
-            'images': images,
+            'text': _have_clipboard,
+            'images': _have_clipboard and _use_xclip,
             'multiple_formats_copy': False,
             'multiple_formats_paste': True,
         }
+    # End of Linux implementation
